@@ -1,82 +1,241 @@
-import { useEffect, useState } from "react";
-import { fetchProducts } from "./lib/products";
+import { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
+import { fetchProducts } from "./lib/products";
+import { proxyUrl } from "./lib/api";
 
+// ---------- helpers ----------
+function includes(hay: string, needle: string) {
+  return hay.toLowerCase().includes(needle.toLowerCase());
+}
+function title(s?: string) {
+  return (s ?? "").trim() || "—";
+}
+async function blobToDataUrl(b: Blob): Promise<string> {
+  return await new Promise((res) => {
+    const r = new FileReader();
+    r.onloadend = () => res(String(r.result));
+    r.readAsDataURL(b);
+  });
+}
+async function urlToDataUrl(url: string): Promise<string> {
+  const r = await fetch(url, { cache: "no-store" });
+  const blob = await r.blob();
+  return blobToDataUrl(blob);
+}
+
+// ---------- component ----------
 export default function App() {
+  // products
   const [items, setItems] = useState<Product[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
+  const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     (async () => {
       try {
-        // adjust the tab name if not "Products"
+        // if you prefer using gid: change products.ts to call /api/sheets?gid=...
         const ps = await fetchProducts("Products!A:Z");
         setItems(ps);
       } catch (e: any) {
-        setError(e?.message || "fetch error");
+        setErr(e?.message || "fetch error");
       }
     })();
   }, []);
 
-  return (
-    <div style={{ padding: 24, fontFamily: "system-ui, Arial, sans-serif" }}>
-      <h1>Product Selection</h1>
-      {error && <p style={{ color: "crimson" }}>Error: {error}</p>}
-      {!items && !error && <p>Loading…</p>}
+  // selection
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const selectedList = useMemo(
+    () => (items ?? []).filter((p) => selected[(p.code || p.name || "") + "::" + (p.url || "")]),
+    [items, selected]
+  );
+  function keyOf(p: Product) { return (p.code || p.name || "") + "::" + (p.url || ""); }
+  function toggle(p: Product) {
+    const k = keyOf(p);
+    setSelected((s) => ({ ...s, [k]: !s[k] }));
+  }
 
-      {items && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-          gap: 16
-        }}>
-          {items.map((p, i) => (
-            <div key={(p.code || p.name || String(i)) + i}
-                 style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-              {p.imageProxied && (
-                <img
-                  src={p.imageProxied}
-                  alt={p.name || p.code || "product"}
-                  style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8, marginBottom: 8 }}
-                />
-              )}
-              <div style={{ fontWeight: 700 }}>{p.name || p.code || "Unnamed product"}</div>
-              {p.code && <div style={{ opacity: 0.7, fontSize: 13 }}>{p.code}</div>}
-              {p.description && <p style={{ fontSize: 14, marginTop: 8 }}>{p.description}</p>}
-              {p.specsBullets && p.specsBullets.length > 0 && (
-                <ul style={{ paddingLeft: 16, margin: "8px 0", fontSize: 13 }}>
-                  {p.specsBullets.slice(0, 6).map((s, j) => <li key={j}>{s}</li>)}
-                </ul>
-              )}
-              <div style={{ display: "grid", gap: 4, marginTop: 8, fontSize: 13 }}>
-                {p.pdfUrl && (
-                  <a href={`/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`} target="_blank" rel="noreferrer">
-                    View spec sheet (PDF)
-                  </a>
-                )}
-                {p.url && (
-                  <a href={p.url} target="_blank" rel="noreferrer">
-                    Product page
-                  </a>
-                )}
-              </div>
-              {p.contact && (p.contact.name || p.contact.email || p.contact.phone) && (
-                <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
-                  <div>Contact: {p.contact.name || "—"}</div>
-                  {p.contact.email && <div>Email: {p.contact.email}</div>}
-                  {p.contact.phone && <div>Phone: {p.contact.phone}</div>}
-                  {p.contact.address && <div style={{ whiteSpace: "pre-wrap" }}>{p.contact.address}</div>}
-                </div>
-              )}
-              {p.category && (
-                <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
-                  Category: {p.category}
-                </div>
-              )}
-            </div>
-          ))}
+  // filters
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("All");
+  const [sort, setSort] = useState<"sheet"|"name">("sheet");
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of items ?? []) if (p.category) set.add(p.category);
+    return ["All", ...Array.from(set).sort()];
+  }, [items]);
+
+  const visible = useMemo(() => {
+    let arr = [...(items ?? [])];
+    if (q) {
+      arr = arr.filter(p =>
+        includes(p.name ?? "", q) ||
+        includes(p.code ?? "", q) ||
+        includes(p.description ?? "", q) ||
+        includes(p.category ?? "", q)
+      );
+    }
+    if (cat !== "All") arr = arr.filter(p => p.category === cat);
+    if (sort === "name") arr.sort((a,b)=> (a.name||"").localeCompare(b.name||""));
+    return arr;
+  }, [items, q, cat, sort]);
+
+  // client form
+  const [projectName, setProjectName] = useState("Project Selection");
+  const [clientName, setClientName] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [date, setDate] = useState("");
+
+  // export PPTX
+  async function exportPptx() {
+    if (selectedList.length === 0) return alert("Select at least one product.");
+    const PptxGenJS = (await import("pptxgenjs")).default;
+    const pptx = new PptxGenJS();
+
+    // cover slide
+    pptx.addSlide().addText(
+      [
+        { text: projectName || "Project Selection", options: { fontSize: 28, bold: true } },
+        { text: "\n" + (clientName ? `Client: ${clientName}` : ""), options: { fontSize: 18 } },
+        { text: contactName ? `\nPrepared by: ${contactName}` : "", options: { fontSize: 16 } },
+        { text: email ? `\nEmail: ${email}` : "", options: { fontSize: 14 } },
+        { text: phone ? `\nPhone: ${phone}` : "", options: { fontSize: 14 } },
+        { text: date ? `\nDate: ${date}` : "", options: { fontSize: 14 } },
+      ],
+      { x: 0.6, y: 0.6, w: 12, h: 6 }
+    );
+
+    // product slides
+    for (const p of selectedList) {
+      const s = pptx.addSlide();
+
+      // try to add image (via proxy – convert to data URL for pptx)
+      try {
+        if (p.imageProxied) {
+          const dataUrl = await urlToDataUrl(p.imageProxied);
+          s.addImage({ data: dataUrl, x: 0.5, y: 0.7, w: 5.5, h: 4.1, sizing: { type: "contain" } });
+        }
+      } catch { /* ignore image failures */ }
+
+      const lines: string[] = [];
+      if (p.description) lines.push(p.description);
+      if (p.specsBullets?.length) lines.push("• " + p.specsBullets.join("\n• "));
+      if (p.category) lines.push(`\nCategory: ${p.category}`);
+
+      s.addText(title(p.name), { x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true });
+      s.addText(p.code ? `SKU: ${p.code}` : "", { x: 6.2, y: 1.4, w: 6.2, h: 0.4, fontSize: 12 });
+      s.addText(lines.join("\n"), { x: 6.2, y: 1.9, w: 6.2, h: 3.7, fontSize: 12 });
+      if (p.url) s.addText("Product page", { x: 6.2, y: 5.8, w: 6.2, h: 0.4, fontSize: 12, underline: true, hyperlink: { url: p.url } });
+      if (p.pdfUrl) s.addText("Spec sheet (PDF)", { x: 6.2, y: 6.2, w: 6.2, h: 0.4, fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl } });
+    }
+
+    const filename = `${(projectName || "Selection").replace(/[^\w-]+/g,"_")}.pptx`;
+    await pptx.writeFile({ fileName: filename });
+  }
+
+  // ---------- render ----------
+  return (
+    <div className="wrap">
+      <h1>Product Selection</h1>
+
+      {/* header form */}
+      <div className="card form">
+        <div className="grid2">
+          <label>
+            <div>Project name</div>
+            <input value={projectName} onChange={e=>setProjectName(e.target.value)} placeholder="Project Selection"/>
+          </label>
+          <label>
+            <div>Client name</div>
+            <input value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="Client name"/>
+          </label>
         </div>
-      )}
+        <div className="grid2">
+          <label>
+            <div>Your name (contact)</div>
+            <input value={contactName} onChange={e=>setContactName(e.target.value)} placeholder="Your name"/>
+          </label>
+          <label>
+            <div>Date</div>
+            <input value={date} onChange={e=>setDate(e.target.value)} placeholder="dd/mm/yyyy"/>
+          </label>
+        </div>
+        <div className="grid2">
+          <label>
+            <div>Email</div>
+            <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/>
+          </label>
+          <label>
+            <div>Phone</div>
+            <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="0000 000 000"/>
+          </label>
+        </div>
+      </div>
+
+      {/* toolbar */}
+      <div className="toolbar">
+        <input
+          className="search"
+          placeholder="Search products, SKU, description..."
+          value={q}
+          onChange={e=>setQ(e.target.value)}
+        />
+        <select value={cat} onChange={e=>setCat(e.target.value)}>
+          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={sort} onChange={e=>setSort(e.target.value as any)}>
+          <option value="sheet">Sheet order</option>
+          <option value="name">Name (A–Z)</option>
+        </select>
+        <div className="spacer"/>
+        <div className="muted">Selected: {selectedList.length}</div>
+        <button className="primary" onClick={exportPptx}>Export PPTX</button>
+      </div>
+
+      {/* status */}
+      {err && <p className="error">Error: {err}</p>}
+      {!items && !err && <p>Loading…</p>}
+
+      {/* grid */}
+      <div className="grid">
+        {(visible ?? []).map((p, i) => {
+          const k = keyOf(p);
+          const isSel = !!selected[k];
+          return (
+            <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
+              <label className="checkbox">
+                <input type="checkbox" checked={isSel} onChange={()=>toggle(p)} />
+              </label>
+
+              <div className="thumb">
+                {p.imageProxied
+                  ? <img src={p.imageProxied} alt={p.name || p.code || "product"} />
+                  : <div className="ph">No image</div>}
+              </div>
+
+              <div className="body">
+                <div className="name">{title(p.name)}</div>
+                {p.code && <div className="sku">SKU: {p.code}</div>}
+                {p.description && <p className="desc">{p.description}</p>}
+                {p.specsBullets && p.specsBullets.length > 0 && (
+                  <ul className="specs">
+                    {p.specsBullets.slice(0,4).map((s,j)=><li key={j}>{s}</li>)}
+                  </ul>
+                )}
+                <div className="links">
+                  {p.url && <a href={p.url} target="_blank" rel="noreferrer">Product page</a>}
+                  {p.pdfUrl &&
+                    <a href={`/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`}
+                       target="_blank" rel="noreferrer">
+                      Spec sheet (PDF)
+                    </a>}
+                </div>
+                {p.category && <div className="category">Category: {p.category}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
