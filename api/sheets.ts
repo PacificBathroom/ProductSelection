@@ -1,8 +1,7 @@
-// api/sheets.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(_req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const { SHEETS_SPREADSHEET_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
@@ -17,11 +16,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
-
-    // Adjust tab/range for your sheet
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEETS_SPREADSHEET_ID,
-      range: 'Products!A:Z',
+      range: 'Products!A:Z',   // adjust to your tab/range
     });
 
     return res.status(200).json({ values: data.values ?? [] });
