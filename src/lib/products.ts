@@ -1,10 +1,10 @@
 import { sheetsUrl, proxyUrl } from "./api";
 import type { Product } from "../types";
 
-// normalize "Column Name" → "columnname" (lowercase alnum only)
+// normalize "Column Name" → "columnname"
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-// extract URL if cell uses IMAGE("https://...") formula
+// extract URL if cell uses IMAGE("https://...")
 const urlFromImageFormula = (v: unknown): string | undefined => {
   if (typeof v !== "string") return undefined;
   const m = v.trim().match(/^=*\s*image\s*\(\s*"([^"]+)"\s*(?:,.*)?\)\s*$/i);
@@ -84,14 +84,16 @@ export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> 
         assignPath(out, path, splitBullets(v));
         continue;
       }
-      if (path === "description" || path === "pdfUrl" || path === "url" || path === "category" || path === "code" || path === "name" || path === "select") {
-        assignPath(out, path, coerceString(v));
-        continue;
-      }
-      // contact fields and any other mapped string path
+
+      // string fields (including contact.*)
       assignPath(out, path, coerceString(v));
     }
 
-    // keep original columns too if they weren't mapped
-    for (const [k, v] of Object.entries(raw)) {
-      if (out[k as keyof Prod]()
+    // If you want to keep the original row as well (optional):
+    // (out as any)._raw = raw;
+
+    return out;
+  });
+
+  return products;
+}
