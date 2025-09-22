@@ -17,13 +17,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const url = String(req.query.url || '');
-    if (!url) return res.status(400).setHeader('Access-Control-Allow-Origin', '*').json({ error: 'Missing url' });
+    if (!url) {
+      return res.status(400).json({ error: 'Missing url' });
+    }
 
     const upstream = await fetch(url, { redirect: 'follow' });
     if (!upstream.ok) {
       return res
         .status(upstream.status)
-        .setHeader('Access-Control-Allow-Origin', '*')
         .json({ error: `Upstream ${upstream.status} ${upstream.statusText}` });
     }
 
