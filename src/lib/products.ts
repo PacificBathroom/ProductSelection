@@ -53,11 +53,16 @@ function assignPath(obj: any, path: string, value: unknown) {
   cur[parts[parts.length - 1]] = value;
 }
 
-export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
-  const url = `${sheetsUrl}?as=objects&range=${encodeURIComponent(range)}`;
+export async function fetchProducts(rangeOrGid = "734704468") {
+  const url = `${sheetsUrl}?as=objects&gid=${encodeURIComponent(rangeOrGid)}`;
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err?.error || `Sheets HTTP ${r.status}`);
   const data = (await r.json()) as { values?: Record<string, unknown>[] };
+  // ... existing mapping logic ...
+}
+
   const rows = data.values ?? [];
 
   const products: Product[] = rows.map(raw => {
