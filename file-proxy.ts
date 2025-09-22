@@ -1,42 +1,40 @@
-// netlify/functions/file-proxy.ts
-import type { Handler } from "@netlify/functions";
+// api/file-proxy.ts
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+// CORS helpers
+function setCors(res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
-export const handler: Handler = async (event) => {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  setCors(res);
+  if (req.method === 'OPTIONS') return res.status(204).end();
+
   try {
-    if (event.httpMethod === "OPTIONS") {
-      return { statusCode: 204, headers: CORS, body: "" };
-    }
-    const url = event.queryStringParameters?.url;
-    if (!url) return { statusCode: 400, headers: CORS, body: "Missing url" };
+    const url = String(req.query.url || '');
+    if (!url) return res.status(400).json({ error: 'Missing url' });
 
     const upstream = await fetch(url, {
-      redirect: "follow",
+      redirect: 'follow',
       headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "*/*",
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': '*/*',
       },
     });
+
     if (!upstream.ok) {
-      return { statusCode: upstream.status, headers: CORS, body: `Upstream ${upstream.status}` };
+      return res.status(upstream.status).json({ error: `Upstream ${upstream.status} ${upstream.statusText}` });
     }
 
-    const ct = upstream.headers.get("content-type") || "application/octet-stream";
-    const buf = await upstream.arrayBuffer();
-    const b64 = Buffer.from(buf).toString("base64");
+    const ct = upstream.headers.get('content-type') ?? 'application/octet-stream';
+    const buf = Buffer.from(await upstream.arrayBuffer());
 
-    return {
-      statusCode: 200,
-      headers: { ...CORS, "Content-Type": ct, "Cache-Control": "public, max-age=86400" },
-      body: b64,
-      isBase64Encoded: true,   // <-- critical
-    };
+    res.setHeader('Content-Type', ct);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // same caching intent
+    return res.status(200).send(buf); // send raw bytes
   } catch (e: any) {
-    return { statusCode: 500, headers: CORS, body: e?.message || "Proxy error" };
+    return res.status(500).json({ error: e?.message || 'Proxy error' });
   }
-};
+}
