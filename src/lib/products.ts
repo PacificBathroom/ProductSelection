@@ -1,49 +1,56 @@
 import { sheetsUrl, proxyUrl } from "./api";
 import type { Product } from "../types";
 
-// normalize "Column Name" → "columnname"
-const norm = (s: unknown) =>
-  String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+// normalize "Column Name" → "columnname" (lowercase alnum only)
+const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-// extract URL if the cell uses =IMAGE("https://...") or variations
+// extract URL if cell uses IMAGE("https://...") formula
 const urlFromImageFormula = (v: unknown): string | undefined => {
   if (typeof v !== "string") return undefined;
   const m = v.trim().match(/^=*\s*image\s*\(\s*"([^"]+)"\s*(?:,.*)?\)\s*$/i);
   return m?.[1];
 };
 
-// split specs text into bullets (handles lines or semicolons)
+const coerceString = (v: unknown) => (v == null ? undefined : String(v).trim() || undefined);
+const coerceImageUrl = (v: unknown) => urlFromImageFormula(v) || coerceString(v);
+
+// split specs text into bullets (lines/semicolons/• bullets)
 const splitBullets = (v: unknown): string[] | undefined => {
-  if (v == null) return undefined;
-  const s = String(v).trim();
+  const s = coerceString(v);
   if (!s) return undefined;
-  return s
-    .split(/\r?\n|;|•/g)
-    .map(t => t.trim())
-    .filter(Boolean);
+  return s.split(/\r?\n|;|•/g).map(t => t.trim()).filter(Boolean);
 };
 
-// map common header variants → canonical key
-const KEY_MAP: Record<string, keyof Product> = {
-  // code
-  code: "code", sku: "code", itemcode: "code", productcode: "code",
-  // name
-  name: "name", productname: "name", title: "name",
-  // description
-  description: "description", desc: "description", details: "description",
-  // image
-  image: "imageUrl", imageurl: "imageUrl", img: "imageUrl", picture: "imageUrl",
-  // specs
-  specs: "specsBullets", spec: "specsBullets", specsbullets: "specsBullets",
-  specifications: "specsBullets",
-  // pdf/datasheet
-  pdf: "pdfUrl", pdfurl: "pdfUrl", datasheet: "pdfUrl", brochure: "pdfUrl",
-  // category
-  category: "category", type: "category", group: "category"
+// Map your exact headers → canonical keys
+// (left side is normalized header name; right side is Product key path)
+const KEY_MAP: Record<string, string> = {
+  // direct fields
+  select: "select",
+  url: "url",
+  code: "code",
+  name: "name",
+  imageurl: "imageUrl",
+  description: "description",
+  specsbullets: "specsBullets",
+  pdfurl: "pdfUrl",
+  category: "category",
+
+  // contact fields (nest under contact)
+  contactname: "contact.name",
+  contactemail: "contact.email",
+  contactphone: "contact.phone",
+  contactaddress: "contact.address",
 };
 
-function coerceImageUrl(v: unknown): string | undefined {
-  return urlFromImageFormula(v) || (typeof v === "string" ? v.trim() : undefined);
+function assignPath(obj: any, path: string, value: unknown) {
+  const parts = path.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (cur[k] == null || typeof cur[k] !== "object") cur[k] = {};
+    cur = cur[k];
+  }
+  cur[parts[parts.length - 1]] = value;
 }
 
 export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
@@ -54,47 +61,37 @@ export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> 
   const rows = data.values ?? [];
 
   const products: Product[] = rows.map(raw => {
-    // Build a case-insensitive view of the row keys
+    // Build a normalized key view
     const lower: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(raw)) lower[norm(k)] = v;
 
     const out: Product = {};
 
-    // walk through keys and map what we recognize
-    for (const [k, v] of Object.entries(lower)) {
-      const key = KEY_MAP[k];
-      if (!key) continue;
+    for (const [kNorm, v] of Object.entries(lower)) {
+      const path = KEY_MAP[kNorm];
+      if (!path) continue;
 
-      if (key === "imageUrl") {
+      // special coercions
+      if (path === "imageUrl") {
         const u = coerceImageUrl(v);
         if (u) {
           out.imageUrl = u;
           out.imageProxied = proxyUrl(u);
         }
-      } else if (key === "specsBullets") {
-        out.specsBullets = splitBullets(v);
-      } else if (key === "description") {
-        const s = v == null ? "" : String(v);
-        out.description = s || undefined;
-      } else if (key === "pdfUrl") {
-        const s = v == null ? "" : String(v).trim();
-        out.pdfUrl = s || undefined;
-      } else if (key === "category") {
-        const s = v == null ? "" : String(v).trim();
-        out.category = s || undefined;
-      } else if (key === "code" || key === "name") {
-        const s = v == null ? "" : String(v).trim();
-        (out as any)[key] = s || undefined;
+        continue;
       }
+      if (path === "specsBullets") {
+        assignPath(out, path, splitBullets(v));
+        continue;
+      }
+      if (path === "description" || path === "pdfUrl" || path === "url" || path === "category" || path === "code" || path === "name" || path === "select") {
+        assignPath(out, path, coerceString(v));
+        continue;
+      }
+      // contact fields and any other mapped string path
+      assignPath(out, path, coerceString(v));
     }
 
-    // keep original fields too (optional)
+    // keep original columns too if they weren't mapped
     for (const [k, v] of Object.entries(raw)) {
-      if (out[k as keyof Product] === undefined) (out as any)[k] = v;
-    }
-
-    return out;
-  });
-
-  return products;
-}
+      if (out[k as keyof Prod]()
