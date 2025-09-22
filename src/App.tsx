@@ -1,17 +1,16 @@
 import { useEffect, useState } from "react";
-import { sheetsUrl, proxyUrl } from "./lib/api";
+import { fetchProducts } from "./lib/products";
+import type { Product } from "./types";
 
 export default function App() {
-  const [rows, setRows] = useState<string[][] | null>(null);
+  const [items, setItems] = useState<Product[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch(sheetsUrl);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const data = await r.json() as { values?: string[][] };
-        setRows(data.values ?? []);
+        const ps = await fetchProducts("Products!A:Z"); // adjust your tab/range
+        setItems(ps);
       } catch (e: any) {
         setError(e?.message || "fetch error");
       }
@@ -19,31 +18,43 @@ export default function App() {
   }, []);
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: 24, fontFamily: "system-ui, Arial, sans-serif" }}>
       <h1>Product Selection</h1>
-      <p>Vercel + Vite + API functions are ready.</p>
-
       {error && <p style={{ color: "crimson" }}>Error: {error}</p>}
+      {!items && !error && <p>Loading…</p>}
 
-      {rows && rows.length > 0 && (
-        <>
-          <p>Rows loaded: {rows.length}</p>
-          <table border={1} cellPadding={6}>
-            <tbody>
-              {rows.slice(0, 5).map((r, i) => (
-                <tr key={i}>
-                  {r.slice(0, 5).map((c, j) => <td key={j}>{c}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+      {items && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16 }}>
+          {items.map((p, i) => (
+            <div key={(p.code || p.name || String(i)) + i} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
+              {p.imageProxied && (
+                <img
+                  src={p.imageProxied}
+                  alt={p.name || p.code || "product"}
+                  style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8, marginBottom: 8 }}
+                />
+              )}
+              <div style={{ fontWeight: 600 }}>{p.name || p.code || "Unnamed product"}</div>
+              {p.code && <div style={{ opacity: 0.7, fontSize: 13 }}>{p.code}</div>}
+              {p.description && <p style={{ fontSize: 14 }}>{p.description}</p>}
+              {p.specsBullets && p.specsBullets.length > 0 && (
+                <ul style={{ paddingLeft: 16, margin: "8px 0", fontSize: 13 }}>
+                  {p.specsBullets.slice(0, 4).map((s, j) => <li key={j}>{s}</li>)}
+                </ul>
+              )}
+              {p.pdfUrl && (
+                <a
+                  href={`/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`}
+                  target="_blank" rel="noreferrer"
+                  style={{ fontSize: 13 }}
+                >
+                  View spec sheet (PDF)
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
       )}
-
-      <div style={{ marginTop: 16 }}>
-        <p>Proxy image test:</p>
-        <img src={proxyUrl("https://picsum.photos/200")} alt="proxy test" />
-      </div>
     </div>
   );
 }
