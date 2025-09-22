@@ -6,7 +6,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const { SHEETS_SPREADSHEET_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
     if (!SHEETS_SPREADSHEET_ID || !GOOGLE_CLIENT_EMAIL || !GOOGLE_PRIVATE_KEY) {
-      return res.status(500).json({ error: 'Missing env vars' });
+      return res.status(500).json({ error: 'Missing Google Sheets environment variables' });
     }
 
     const auth = new google.auth.JWT({
@@ -16,7 +16,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const sheets = google.sheets({ version: 'v4', auth });
-    // adjust range to your sheet
+
+    // adjust the sheet/tab name if yours is not "Products"
     const { data } = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEETS_SPREADSHEET_ID,
       range: 'Products!A:Z',
