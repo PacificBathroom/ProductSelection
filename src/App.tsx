@@ -76,7 +76,7 @@ export default function App() {
       try {
         if (p.imageProxied) {
           const dataUrl = await urlToDataUrl(p.imageProxied);
-          s.addImage({ data: dataUrl, x: 0.5, y: 0.7, w: 5.5, h: 4.1, sizing: { type: "contain" } });
+          s.addImage({ data: dataUrl, x: 0.5, y: 0.7, w: 5.5, h: 4.1, sizing: { type: "contain", w: 5.5, h: 4.1 } });
         }
       } catch {}
       const lines: string[] = [];
