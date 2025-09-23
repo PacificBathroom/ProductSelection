@@ -115,16 +115,24 @@ export default function App() {
 
       {/* toolbar */}
       <div className="toolbar">
-        <input className="search" placeholder="Search products, SKU, description..." value={q} onChange={e=>setQ(e.target.value)} />
-        <select value={cat} onChange={e=>setCat(e.target.value)}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
-        <select value={sort} onChange={e=>setSort(e.target.value as any)}>
-          <option value="sheet">Sheet order</option>
-          <option value="name">Name (A–Z)</option>
-        </select>
-        <div className="spacer" />
-        <div className="muted">Selected: {selectedList.length}</div>
-        <button className="primary" onClick={exportPptx}>Export PPTX</button>
-      </div>
+  <input className="search" ... />
+
+  {/* add className="category" */}
+  <select className="category" value={cat} onChange={e=>setCat(e.target.value)}>
+    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+  </select>
+
+  {/* add className="sort" */}
+  <select className="sort" value={sort} onChange={e=>setSort(e.target.value as any)}>
+    <option value="sheet">Sheet order</option>
+    <option value="name">Name (A–Z)</option>
+  </select>
+
+  <div className="spacer" />
+  <div className="muted">Selected: {selectedList.length}</div>
+  <button className="primary" onClick={exportPptx}>Export PPTX</button>
+</div>
+
 
       {/* status */}
       {err && <p className="error">Error: {err}</p>}
