@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
-import { proxyUrl } from "./lib/api";
+
 
 // utils
 const includes = (h: string, n: string) => h.toLowerCase().includes(n.toLowerCase());
@@ -55,7 +55,7 @@ export default function App() {
   // export PPTX
   async function exportPptx() {
     if (selectedList.length === 0) return alert("Select at least one product.");
-    const PptxGenJS = (await import("pptxgenjs")).default;
+    const PptxGenJS = (await import("pptxgenjs")).default as any;
     const pptx = new PptxGenJS();
 
     // cover
@@ -132,7 +132,7 @@ export default function App() {
 
       {/* grid */}
       <div className="grid">
-        {(visible ?? []).map((p, i) => {
+        {(visible ?? []).map((p: Product, i: number) => {
           const k = keyOf(p); const isSel = !!selected[k];
           return (
             <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
@@ -143,7 +143,7 @@ export default function App() {
                 {p.code && <div className="sku">SKU: {p.code}</div>}
                 {p.description && <p className="desc">{p.description}</p>}
                 {p.specsBullets && p.specsBullets.length > 0 && (
-                  <ul className="specs">{p.specsBullets.slice(0,4).map((s,j)=><li key={j}>{s}</li>)}</ul>
+                  <ul className="specs">{p.specsBullets.slice(0,4).map((s: string, j: number) => <li key={j}>{s}</li>)}</ul>
                 )}
                 <div className="links">
                   {p.url && <a href={p.url} target="_blank" rel="noreferrer">Product page</a>}
