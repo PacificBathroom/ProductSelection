@@ -1,7 +1,7 @@
+// src/lib/products.ts
 import { sheetsUrl, proxyUrl } from "./api";
 import type { Product } from "../types";
 
-// normalize "Column Name" → "columnname"
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // extract URL if cell uses IMAGE("https://...")
@@ -21,10 +21,8 @@ const splitBullets = (v: unknown): string[] | undefined => {
   return s.split(/\r?\n|;|•/g).map(t => t.trim()).filter(Boolean);
 };
 
-// Map your exact headers → canonical keys
-// (left side is normalized header name; right side is Product key path)
+// normalized header name -> Product key path
 const KEY_MAP: Record<string, string> = {
-  // direct fields
   select: "select",
   url: "url",
   code: "code",
@@ -35,7 +33,6 @@ const KEY_MAP: Record<string, string> = {
   pdfurl: "pdfUrl",
   category: "category",
 
-  // contact fields (nest under contact)
   contactname: "contact.name",
   contactemail: "contact.email",
   contactphone: "contact.phone",
@@ -53,19 +50,18 @@ function assignPath(obj: any, path: string, value: unknown) {
   cur[parts[parts.length - 1]] = value;
 }
 
-export async function fetchProducts(rangeOrGid = "734704468") {
-  const url = `${sheetsUrl}?as=objects&gid=${encodeURIComponent(rangeOrGid)}`;
+export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
+  const url = `${sheetsUrl}?as=objects&range=${encodeURIComponent(range)}`;
   const r = await fetch(url);
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(err?.error || `Sheets HTTP ${r.status}`);
-  const data = (await r.json()) as { values?: Record<string, unknown>[] };
-  // ... existing mapping logic ...
-}
+  if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
 
-  const rows = data.values ?? [];
+  // ✅ define the JSON we use below
+  const json = (await r.json()) as { values?: Record<string, unknown>[] };
 
-  const products: Product[] = rows.map(raw => {
+  // ✅ rows typed; no 'any'
+  const rows: Record<string, unknown>[] = json.values ?? [];
+
+  const products: Product[] = rows.map((raw: Record<string, unknown>) => {
     // Build a normalized key view
     const lower: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(raw)) lower[norm(k)] = v;
@@ -76,7 +72,6 @@ export async function fetchProducts(rangeOrGid = "734704468") {
       const path = KEY_MAP[kNorm];
       if (!path) continue;
 
-      // special coercions
       if (path === "imageUrl") {
         const u = coerceImageUrl(v);
         if (u) {
@@ -85,6 +80,7 @@ export async function fetchProducts(rangeOrGid = "734704468") {
         }
         continue;
       }
+
       if (path === "specsBullets") {
         assignPath(out, path, splitBullets(v));
         continue;
@@ -93,9 +89,6 @@ export async function fetchProducts(rangeOrGid = "734704468") {
       // string fields (including contact.*)
       assignPath(out, path, coerceString(v));
     }
-
-    // If you want to keep the original row as well (optional):
-    // (out as any)._raw = raw;
 
     return out;
   });
