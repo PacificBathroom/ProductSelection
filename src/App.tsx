@@ -53,10 +53,146 @@ export default function App() {
   const [date, setDate] = useState("");
 
   // export PPTX
-  async function exportPptx() {
-    if (selectedList.length === 0) return alert("Select at least one product.");
-    const PptxGenJS = (await import("pptxgenjs")).default as any;
-    const pptx = new PptxGenJS();
+  // put this inside your App component, replacing your current exportPptx()
+async function exportPptx() {
+  if (selectedList.length === 0) {
+    alert("Select at least one product.");
+    return;
+  }
+
+  const PptxGenJS = (await import("pptxgenjs")).default as any;
+  const pptx = new PptxGenJS();
+  const W = 10;          // default PPT size in inches
+  const H = 5.625;
+
+  // util to safely add a full-bleed image from /public (skips if not found)
+  async function addFullImage(slide: any, path: string) {
+    try {
+      const r = await fetch(path, { cache: "no-store" });
+      if (!r.ok) return;
+      const b = await r.blob();
+      const data = await new Promise<string>((res) => {
+        const fr = new FileReader();
+        fr.onloadend = () => res(String(fr.result));
+        fr.readAsDataURL(b);
+      });
+      slide.addImage({ data, x: 0, y: 0, w: W, h: H });
+    } catch {
+      /* ignore if not present */
+    }
+  }
+
+  // 1) Title / Cover (always works with text; optionally overlays a cover image)
+  const s0 = pptx.addSlide();
+  s0.addText("Product Selection", { x: 0.7, y: 0.7, fontSize: 34, bold: true });
+  s0.addText(
+    [
+      projectName || "Project Selection",
+      clientName ? `Client: ${clientName}` : "",
+      contactName ? `Prepared by: ${contactName}` : "",
+      email ? `Email: ${email}` : "",
+      phone ? `Phone: ${phone}` : "",
+      date ? `Date: ${date}` : "",
+    ].filter(Boolean).join("\n"),
+    { x: 0.7, y: 1.6, w: 8.6, h: 2.4, fontSize: 16 }
+  );
+  // optional background image if you upload /public/branding/cover.jpg
+  await addFullImage(s0, "/branding/cover.jpg");
+
+  // 2) Warranty (optional — uses /public/branding/warranty.jpg if present)
+  const sW = pptx.addSlide();
+  await addFullImage(sW, "/branding/warranty.jpg");
+
+  // 3) Product slides
+  for (const p of selectedList) {
+    const s = pptx.addSlide();
+
+    // product image (proxied) - contain inside a fixed box
+    try {
+      if (p.imageProxied) {
+        const r = await fetch(p.imageProxied, { cache: "no-store" });
+        if (r.ok) {
+          const dataUrl = await new Promise<string>((res) => {
+            r.blob().then((b) => {
+              const fr = new FileReader();
+              fr.onloadend = () => res(String(fr.result));
+              fr.readAsDataURL(b);
+            });
+          });
+          s.addImage({
+            data: dataUrl,
+            x: 0.5,
+            y: 0.8,
+            w: 5.4,
+            h: 3.9,
+            sizing: { type: "contain", w: 5.4, h: 3.9 },
+          });
+        }
+      }
+    } catch {}
+
+    // right column text
+    s.addText((p.name ?? "—").trim() || "—", {
+      x: 6.2,
+      y: 0.8,
+      w: 3.6,
+      h: 0.6,
+      fontSize: 22,
+      bold: true,
+    });
+    if (p.code) s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.5, w: 3.6, h: 0.35, fontSize: 12 });
+    if (p.description) {
+      s.addText(p.description, { x: 6.2, y: 1.9, w: 3.6, h: 1.0, fontSize: 12 });
+    }
+
+    // ✅ real bullet points (specs)
+    const bulletItems =
+      (p.specsBullets ?? []).map((t: string) => ({ text: t, options: { bullet: true, fontSize: 12 } }));
+    if (bulletItems.length) {
+      s.addText(bulletItems, { x: 6.2, y: 3.05, w: 3.6, h: 1.6 });
+    }
+
+    if (p.category) {
+      s.addText(`Category: ${p.category}`, { x: 6.2, y: 4.75, w: 3.6, h: 0.35, fontSize: 11 });
+    }
+
+    let linkY = 5.15;
+    if (p.url) {
+      s.addText("Product page", {
+        x: 6.2, y: linkY, w: 3.6, h: 0.3, fontSize: 12, underline: true, hyperlink: { url: p.url },
+      });
+      linkY += 0.35;
+    }
+    if (p.pdfUrl) {
+      s.addText("Spec sheet (PDF)", {
+        x: 6.2, y: linkY, w: 3.6, h: 0.3, fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl },
+      });
+    }
+  }
+
+  // 4) Outro / branded slides (optional if images exist)
+  const end1 = pptx.addSlide();
+  await addFullImage(end1, "/branding/end-1.jpg");
+
+  const end2 = pptx.addSlide();
+  await addFullImage(end2, "/branding/end-2.jpg");
+  // light overlay text (works even if the image is missing)
+  end2.addText(
+    [
+      projectName || "Product Selection",
+      clientName ? `for ${clientName}` : "",
+      contactName ? `Prepared by ${contactName}` : "",
+      email || "",
+      phone || "",
+    ].filter(Boolean).join("\n"),
+    { x: 0.7, y: 4.1, w: 8.6, h: 1.1, fontSize: 14, color: "FFFFFF" }
+  );
+
+  await pptx.writeFile({
+    fileName: `${(projectName || "Selection").replace(/[^\w-]+/g, "_")}.pptx`,
+  });
+}
+
 
     // cover
     pptx.addSlide().addText(
