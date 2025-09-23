@@ -11,11 +11,42 @@ h1 { margin: 0 0 16px; }
 .form label div { font-size: 12px; opacity: .75; margin-bottom: 6px; }
 .form input { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; }
 
-.toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0; }
-.toolbar .search { flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; }
-.toolbar select { padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; background: #fff; }
-.toolbar .spacer { flex: 1; }
-.toolbar .muted { opacity: .7; }
+/* toolbar layout */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* search grows, selects stay compact */
+.toolbar .search {
+  flex: 1 1 260px;      /* grows, min ~260px */
+}
+
+.toolbar select.category {
+  width: 220px;         /* make the Category dropdown shorter */
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.toolbar select.sort {
+  width: 160px;
+  max-width: 160px;
+}
+
+/* keep button tidy */
+.toolbar .primary {
+  height: 36px;
+  padding: 0 14px;
+}
+
+.toolbar .muted {
+  white-space: nowrap;
+}
+
 button.primary { padding: 10px 14px; border: 0; border-radius: 10px; background: #2563eb; color: #fff; font-weight: 600; }
 button.primary:hover { filter: brightness(.95); cursor: pointer; }
 
