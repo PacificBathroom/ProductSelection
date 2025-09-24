@@ -354,6 +354,9 @@ export default function App() {
                     </a>
                   )}
                 </div>
+@media (max-width: 720px) {
+  .toolbar .search { flex: 1 1 100%; } /* search goes full width on its own row */
+}
 
                 {p.category && <div className="category">Category: {p.category}</div>}
               </div>
