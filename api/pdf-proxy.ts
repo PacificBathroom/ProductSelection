@@ -13,6 +13,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const buf = Buffer.from(await r.arrayBuffer());
     res.setHeader('Content-Type', ct);
     res.send(buf);
+    // inside your success branch, right before res.send(buf):
+res.setHeader('Content-Disposition', 'inline; filename="spec.pdf"');
+
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'pdf proxy error' });
   }
