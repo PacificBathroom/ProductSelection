@@ -1,15 +1,40 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-// Default 16:9 slide size for PptxGenJS
-const SLIDE_W = 10;
-const SLIDE_H = 5.625;
+// Slide size for 16:9 (pptxgen default)
+const FULL_W = 10;
+const FULL_H = 5.625;
 
-// Public images you already added (under /public/branding)
+// Branding image paths (must exist under public/branding)
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
-const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
+const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-type ExportArgs = {
+// Helpers
+function safe(s?: string) { return (s ?? "").trim(); }
+function sanitizeFileName(s: string) {
+  const base = safe(s) || "Selection";
+  return base.replace(/[^\w\-]+/g, "_") + ".pptx";
+}
+async function blobToDataUrl(b: Blob): Promise<string> {
+  return await new Promise((res) => {
+    const r = new FileReader();
+    r.onloadend = () => res(String(r.result));
+    r.readAsDataURL(b);
+  });
+}
+async function urlToDataUrl(url: string): Promise<string> {
+  const r = await fetch(url, { cache: "no-store" });
+  const b = await r.blob();
+  return blobToDataUrl(b);
+}
+
+// Clamp text to a number of lines for PPT sizing safety
+function clampLines(txt: string, maxLines: number): string {
+  const lines = txt.split(/\r?\n/).filter(Boolean);
+  return lines.slice(0, maxLines).join("\n");
+}
+
+export async function exportPptx(args: {
   projectName: string;
   clientName: string;
   contactName: string;
@@ -17,215 +42,137 @@ type ExportArgs = {
   phone: string;
   date: string;
   items: Product[];
-};
-
-// --- helpers ---------------------------------------------------------------
-
-function ensureHttp(url?: string): string | undefined {
-  if (!url) return;
-  if (url.startsWith("/")) return window.location.origin + url;
-  return url;
-}
-
-async function toDataUrl(url: string): Promise<string> {
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`fetch fail ${r.status}`);
-  const b = await r.blob();
-  return await new Promise((res) => {
-    const fr = new FileReader();
-    fr.onloadend = () => res(String(fr.result));
-    fr.readAsDataURL(b);
-  });
-}
-
-// Try very hard to produce some specs bullets
-function getSpecs(p: Product): string[] {
-  if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
-    return p.specsBullets.map(s => s.trim()).filter(Boolean);
-  }
-  const raw =
-    (p as any).specifications ||
-    (p as any).specs ||
-    p.description ||
-    "";
-
-  return String(raw)
-    .split(/\r?\n|[•;]| - |\u2022/g)
-    .map(s => s.trim().replace(/^[-•\u2022]\s*/, ""))
-    .filter(Boolean);
-}
-
-function clamp(s: string, max: number): string {
-  const t = s.trim();
-  return t.length <= max ? t : t.slice(0, max - 1) + "…";
-}
-
-// --- main -----------------------------------------------------------------
-
-export async function exportPptx(args: ExportArgs) {
+}) {
   const { projectName, clientName, contactName, email, phone, date, items } = args;
-
-  if (!items || items.length === 0) {
-    alert("Select at least one product.");
-    return;
-  }
 
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // ========== COVERS (two bathroom photos with overlaid text) ==========
-  for (const [i, url] of COVER_URLS.entries()) {
+  // ---------- COVERS with overlay text ----------
+  for (const path of COVER_URLS) {
+    const s = pptx.addSlide();
+
     try {
-      const dataUrl = await toDataUrl(ensureHttp(url)!);
-      const s = pptx.addSlide();
+      const img = await urlToDataUrl(path);
+      // Full-bleed background; use 'cover' to avoid distortion
+      s.addImage({ data: img, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+    } catch {
+      // ignore background image failure
+    }
 
-      // full-bleed background photo
-      s.addImage({
-        data: dataUrl,
-        x: 0, y: 0, w: SLIDE_W, h: SLIDE_H,
-        sizing: { type: "cover", w: SLIDE_W, h: SLIDE_H }
-      });
+    // Overlay text block (top-left)
+    const overlayX = 0.6;
+    const overlayY = 0.6;
+    const overlayW = 6.4;
+    const overlayH = 3.4;
 
-      // a soft translucent band to help readability
-      s.addShape(pptx.ShapeType.rect, {
-        x: 0.45, y: 0.45, w: SLIDE_W - 0.9, h: 2.2,
-        fill: { color: "FFFFFF", transparency: 30 },
-        line: { color: "FFFFFF" }
-      });
+    const lines = [
+      { text: "Product Presentation for", options: { fontSize: 18, color: "FFFFFF", bold: true } },
+      { text: safe(projectName),         options: { fontSize: 30, color: "FFFFFF", bold: true } },
+      { text: safe(clientName) ? `\nClient: ${safe(clientName)}` : "", options: { fontSize: 16, color: "FFFFFF" } },
+      { text: safe(contactName) ? `\nPrepared by: ${safe(contactName)}` : "", options: { fontSize: 14, color: "FFFFFF" } },
+      { text: safe(email) ? `\nEmail: ${safe(email)}` : "", options: { fontSize: 12, color: "FFFFFF" } },
+      { text: safe(phone) ? `\nPhone: ${safe(phone)}` : "", options: { fontSize: 12, color: "FFFFFF" } },
+      { text: safe(date) ? `\nDate: ${safe(date)}` : "", options: { fontSize: 12, color: "FFFFFF" } },
+    ];
 
-      // Title + details (both cover 1 and 2)
-      const lines = [
-        { text: "Product Presentation for", options: { fontSize: 18, bold: true, color: "000000" } },
-        { text: `\n${projectName || "Project Selection"}`, options: { fontSize: 32, bold: true, color: "000000" } },
-        { text: clientName ? `\n${clientName}` : "", options: { fontSize: 22, color: "000000" } },
-        { text: "\nYour Pacific Bathroom Contact", options: { fontSize: 14, bold: true, color: "000000" } },
-        { text: contactName ? `\n${contactName}` : "", options: { fontSize: 14, color: "000000" } },
-        {
-          text:
-            (email || phone)
-              ? `\n${[email, phone].filter(Boolean).join("  ·  ")}`
-              : "",
-          options: { fontSize: 12, color: "000000" }
-        },
-        { text: date ? `\n${date}` : "", options: { fontSize: 12, color: "000000" } },
-      ];
+    // Optional semi-transparent panel for readability
+    s.addShape(pptx.ShapeType.rect, {
+      x: overlayX - 0.2, y: overlayY - 0.2, w: overlayW + 0.4, h: overlayH + 0.4,
+      fill: { color: "000000" }, transparency: 50, line: { color: "000000" }
+    });
 
-      s.addText(lines, {
-        x: 0.75, y: 0.6, w: SLIDE_W - 1.5, h: 2.0,
-        align: "left", valign: "top"
-      });
-
-      // Optional small footer note on slide 2
-      if (i === 1) {
-        s.addText("Selections prepared by Pacific Bathroom", {
-          x: 0.75, y: SLIDE_H - 0.8, w: SLIDE_W - 1.5, h: 0.4,
-          fontSize: 10, color: "444444", align: "left"
-        });
-      }
-
-    } catch { /* allow missing image */ }
+    s.addText(lines, {
+      x: overlayX, y: overlayY, w: overlayW, h: overlayH,
+      align: "left", valign: "top", margin: 8
+    });
   }
 
-  // ========== PRODUCT SLIDES ==========
+  // ---------- PRODUCT SLIDES ----------
   for (const p of items) {
     const s = pptx.addSlide();
 
-    // image area (left)
-    const imgX = 0.5, imgY = 0.9, imgW = 4.8, imgH = 3.7;
+    // Left image area
+    const imgX = 0.5, imgY = 0.9, imgW = 5.4, imgH = 4.0;
 
-    try {
-      // Prefer proxied image, otherwise raw image URL
-      const src = ensureHttp(p.imageProxied || p.imageUrl);
-      if (src) {
-        const imgData = await toDataUrl(src);
-        s.addImage({
-          data: imgData,
-          x: imgX, y: imgY, w: imgW, h: imgH,
-          sizing: { type: "contain", w: imgW, h: imgH }
-        });
-      } else {
-        // placeholder box
-        s.addShape(pptx.ShapeType.rect, {
-          x: imgX, y: imgY, w: imgW, h: imgH,
-          fill: { color: "F3F4F6" }, line: { color: "DDDDDD" }
-        });
-        s.addText("No image", {
-          x: imgX, y: imgY + imgH / 2 - 0.2, w: imgW, h: 0.4,
-          align: "center", color: "999999"
-        });
+    if (p.imageProxied) {
+      try {
+        const dataUrl = await urlToDataUrl(p.imageProxied);
+        // contain = fit without stretching
+        s.addImage({ data: dataUrl, x: imgX, y: imgY, w: imgW, h: imgH, sizing: { type: "contain", w: imgW, h: imgH } } as any);
+      } catch {
+        // ignore image failure
       }
-    } catch {
-      // image fetch failed – draw placeholder
+    } else {
+      // simple placeholder box if no image
       s.addShape(pptx.ShapeType.rect, {
         x: imgX, y: imgY, w: imgW, h: imgH,
         fill: { color: "F3F4F6" }, line: { color: "DDDDDD" }
       });
-      s.addText("Image unavailable", {
-        x: imgX, y: imgY + imgH / 2 - 0.2, w: imgW, h: 0.4,
-        align: "center", color: "999999"
-      });
+      s.addText("No image", { x: imgX, y: imgY + imgH / 2 - 0.2, w: imgW, h: 0.4, align: "center", color: "888888" });
     }
 
-    // right column text
-    const colX = 5.4, colW = 4.2;
+    // Right content area
+    const rightX = 6.2, rightW = 3.2;
 
-    // title + code
-    s.addText((p.name || "—"), { x: colX, y: 0.7, w: colW, h: 0.6, fontSize: 22, bold: true });
+    // Title
+    s.addText(safe(p.name) || "—", {
+      x: rightX, y: 0.7, w: rightW, h: 0.6, fontSize: 20, bold: true
+    });
+
+    // SKU
     if (p.code) {
-      s.addText(`SKU: ${p.code}`, { x: colX, y: 1.25, w: colW, h: 0.4, fontSize: 12, color: "555555" });
+      s.addText(`SKU: ${p.code}`, { x: rightX, y: 1.4, w: rightW, h: 0.35, fontSize: 12 });
     }
 
-    // description (clamped so it never overflows)
-    const desc = clamp(p.description || "", 550);
-    if (desc) {
-      s.addText(desc, {
-        x: colX, y: 1.7, w: colW, h: 1.4,
-        fontSize: 12, color: "111111", align: "left", valign: "top"
-      });
+    // Description (clamped)
+    if (p.description) {
+      const desc = clampLines(p.description, 7); // ~7 lines fits the box
+      s.addText(desc, { x: rightX, y: 1.85, w: rightW, h: 1.4, fontSize: 12 });
     }
 
-    // specs list (up to 8)
-    const specs = getSpecs(p).slice(0, 8);
-    if (specs.length) {
-      const runs = specs.map(t => ({ text: `• ${t}\n`, options: { fontSize: 12, color: "111111" } }));
-      s.addText(runs, {
-        x: colX, y: 3.2, w: colW, h: 1.9,
-        align: "left", valign: "top"
-      });
+    // Specs bullets: prefer explicit bullets; else try deriving
+    let bullets = Array.isArray(p.specsBullets) ? p.specsBullets : [];
+    if (!bullets.length && p.description) {
+      bullets = (p.description.split(/\r?\n|[•;]|\u2022/g) || [])
+        .map(s => s.trim())
+        .filter(Boolean);
+    }
+    if (bullets.length) {
+      const bulletText = bullets.slice(0, 8).map(b => `• ${b}`).join("\n");
+      s.addText(bulletText, { x: rightX, y: 3.35, w: rightW, h: 1.7, fontSize: 12 });
     }
 
-    // links
-    let linkY = 5.3;
+    // Category
+    if (p.category) {
+      s.addText(`Category: ${p.category}`, { x: rightX, y: 5.1, w: rightW, h: 0.3, fontSize: 11 });
+    }
+
+    // Links
+    let linkY = 5.5;
     if (p.url) {
       s.addText("Product page", {
-        x: colX, y: linkY, w: colW, h: 0.3, fontSize: 12, underline: true,
+        x: rightX, y: linkY, w: rightW, h: 0.35, fontSize: 12, underline: true,
         hyperlink: { url: p.url }
       });
       linkY += 0.35;
     }
     if (p.pdfUrl) {
-      // Pass through your PDF proxy to avoid CORS
-      const pdf = `/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`;
       s.addText("Spec sheet (PDF)", {
-        x: colX, y: linkY, w: colW, h: 0.3, fontSize: 12, underline: true,
-        hyperlink: { url: pdf }
+        x: rightX, y: linkY, w: rightW, h: 0.35, fontSize: 12, underline: true,
+        hyperlink: { url: p.pdfUrl }
       });
     }
   }
 
-  // ========== BACK PAGES ==========
-  for (const url of BACK_URLS) {
+  // ---------- BACK PAGES ----------
+  for (const path of BACK_URLS) {
+    const s = pptx.addSlide();
     try {
-      const dataUrl = await toDataUrl(ensureHttp(url)!);
-      const s = pptx.addSlide();
-      s.addImage({
-        data: dataUrl,
-        x: 0, y: 0, w: SLIDE_W, h: SLIDE_H,
-        sizing: { type: "cover", w: SLIDE_W, h: SLIDE_H }
-      });
+      const img = await urlToDataUrl(path);
+      s.addImage({ data: img, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
     } catch { /* ignore */ }
   }
 
-  const filename = `${(projectName || "Selection").replace(/[^\w-]+/g, "_")}.pptx`;
-  await pptx.writeFile({ fileName: filename });
+  await pptx.writeFile({ fileName: sanitizeFileName(projectName) });
 }
