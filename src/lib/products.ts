@@ -1,58 +1,69 @@
-// src/lib/products.ts
-import type { Product } from "@/types";
+import type { Product } from "../types";
 
-export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
+// If you already have proxyUrl() elsewhere, you can inline the same behavior:
+const prox = (u?: string) => (u ? `/api/file-proxy?url=${encodeURIComponent(u)}` : undefined);
+
+// Be forgiving about how specs are typed in Sheets
+function parseSpecs(cell?: string): string[] {
+  if (!cell) return [];
+  const s = cell.replace(/\r/g, "").trim();
+  if (!s) return [];
+
+  // If the cell is a JSON array like ["one","two"]
+  try {
+    const j = JSON.parse(s);
+    if (Array.isArray(j)) {
+      return j.map((x) => String(x).trim()).filter(Boolean);
+    }
+  } catch { /* not JSON */ }
+
+  // Split on common separators: newlines, bullets, dashes, semicolons, pipes
+  return s
+    .split(/\n+|•\s*|-\s+|;\s+|\|\s*/g)
+    .map(t => t.trim())
+    .filter(Boolean);
+}
+
+export async function fetchProducts(range: string): Promise<Product[]> {
   const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
   const data = await r.json();
-  const rows: string[][] = data?.values ?? [];
+
+  const rows: string[][] = data.values ?? [];
   if (!rows.length) return [];
 
-  const header = rows[0].map((h: string) => (h || "").trim());
-  const idx = (name: string) => header.indexOf(name);
+  const [header, ...body] = rows;
+  const idx = (name: string) =>
+    header.findIndex((h) => h?.toString().trim().toLowerCase() === name.toLowerCase());
 
-  const iSel = idx("Select");
-  const iUrl = idx("Url");
-  const iCode = idx("Code");
-  const iName = idx("Name");
-  const iImage = idx("ImageURL");
-  const iDesc = idx("Description");
-  const iSpecs = idx("SpecsBullets");
-  const iPdf  = idx("PdfURL");
-  const iCat  = idx("Category");
+  const col = {
+    Url: idx("Url"),
+    Code: idx("Code"),
+    Name: idx("Name"),
+    ImageURL: idx("ImageURL"),
+    Description: idx("Description"),
+    SpecsBullets: idx("SpecsBullets"),
+    PdfURL: idx("PdfURL"),
+    Category: idx("Category"),
+  };
 
-  const products: Product[] = rows.slice(1).map((raw: string[]) => {
-    const pick = (i: number) => (i >= 0 ? (raw[i] ?? "").trim() : "");
+  const get = (row: string[], i: number) => (i >= 0 ? String(row[i] ?? "").trim() : "");
 
-    const url = pick(iUrl);
-    const code = pick(iCode);
-    const name = pick(iName);
-    const description = pick(iDesc);
-    const imageUrl = pick(iImage);
-    const pdfUrl = pick(iPdf);
-    const category = pick(iCat);
-
-    // robust parse of specs
-    const specsRaw = pick(iSpecs);
-    const specsBullets = (specsRaw
-      ? specsRaw
-          .split(/\r?\n|;|•/g)
-          .flatMap(s => s.split(/(?:^|\s)[\-–—]\s+/g))
-          .map(s => s.trim())
-          .filter(Boolean)
-      : []
-    ).slice(0, 20);
-
-    // use the proxy for images so CORS is never a problem (also works in PPTX)
-    const imageProxied = imageUrl ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}` : "";
-
-    return {
-      url, code, name, description, pdfUrl, category,
-      imageUrl, imageProxied,
-      specsBullets,
-    } as Product;
+  const products: Product[] = body.map((row) => {
+    const p: Product = {
+      url:         get(row, col.Url),
+      code:        get(row, col.Code),
+      name:        get(row, col.Name),
+      imageUrl:    get(row, col.ImageURL),
+      description: get(row, col.Description),
+      specsBullets: parseSpecs(get(row, col.SpecsBullets)),
+      pdfUrl:      get(row, col.PdfURL),
+      category:    get(row, col.Category),
+    };
+    p.imageProxied = prox(p.imageUrl);
+    return p;
   });
 
-  // keep original order as in sheet (optionally filter by "Select" if used)
-  return products.filter(p => p.name || p.code || p.url);
+  // keep rows that actually have some content
+  return products.filter(p => (p.name || p.code || p.url));
 }
