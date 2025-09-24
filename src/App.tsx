@@ -67,17 +67,18 @@ export default function App() {
   const [date, setDate] = useState("");
 
   // export handler (calls src/lib/exportPptx.ts)
- import { exportPptxBryant } from "./lib/exportPptx";
-
-async function onExportClick() {
-  if (selectedList.length === 0) return alert("Select at least one product.");
-  await exportPptx({
-    projectName, clientName, contactName, email, phone, date,
-    items: selectedList,
-  });
-}
-
-
+  async function onExportClick() {
+    if (selectedList.length === 0) return alert("Select at least one product.");
+    await exportPptx({
+      projectName,
+      clientName,
+      contactName,
+      email,
+      phone,
+      date,
+      items: selectedList,
+    });
+  }
 
   return (
     <div className="wrap">
@@ -169,10 +170,7 @@ async function onExportClick() {
 
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
-<button className="primary" onClick={onExportClick}>Export PPTX</button>
-
-          Export PPTX
-        </button>
+        <button className="primary" onClick={onExportClick}>Export PPTX</button>
       </div>
 
       {/* status */}
@@ -181,7 +179,7 @@ async function onExportClick() {
 
       {/* grid */}
       <div className="grid">
-        {(visible ?? []).map((p, i) => {
+        {(visible ?? []).map((p: Product, i: number) => {
           const k = keyOf(p);
           const isSel = !!selected[k];
           return (
@@ -205,7 +203,7 @@ async function onExportClick() {
 
                 {p.specsBullets && p.specsBullets.length > 0 && (
                   <ul className="specs">
-                    {p.specsBullets.slice(0, 4).map((s, j) => (
+                    {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
                       <li key={j}>{s}</li>
                     ))}
                   </ul>
