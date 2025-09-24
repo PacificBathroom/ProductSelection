@@ -11,13 +11,12 @@ export type HeaderData = {
   date?: string;
 };
 
-const FULL_W = 10;       // 16:9 pptx width (inches)
-const FULL_H = 5.625;    // 16:9 pptx height (inches)
+const FULL_W = 10;       // pptxgenjs 16:9 width (inches)
+const FULL_H = 5.625;    // pptxgenjs 16:9 height (inches)
 
 const COVER_URLS = ["/pptx/cover1.jpg", "/pptx/cover2.jpg"];
 const BACK_URLS  = ["/pptx/warranty.jpg", "/pptx/service.jpg"];
 
-// ----- small helpers -----
 const title = (s?: string) => (s ?? "").trim() || "—";
 
 async function blobToDataUrl(b: Blob): Promise<string> {
@@ -34,20 +33,29 @@ async function urlToDataUrl(url: string): Promise<string> {
   return blobToDataUrl(b);
 }
 
-// ----- main export function -----
 export async function exportPptx(
   selected: Product[],
   header: HeaderData
 ): Promise<void> {
-  if (!selected.length) {
-    throw new Error("No products selected.");
+  if (!selected?.length) {
+    alert("Select at least one product.");
+    return;
   }
 
-  // Lazy-load pptxgenjs only when exporting
+  const {
+    projectName = "Project Selection",
+    clientName = "",
+    contactName = "",
+    email = "",
+    phone = "",
+    date = "",
+  } = header;
+
+  // Lazy-load pptxgenjs so it isn’t in your main bundle until needed
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // -------- Covers (two bathroom photos) --------
+  // ---------- FRONT COVERS (two bathroom photos) ----------
   for (const url of COVER_URLS) {
     try {
       const dataUrl = await urlToDataUrl(url);
@@ -61,15 +69,28 @@ export async function exportPptx(
         sizing: { type: "cover", w: FULL_W, h: FULL_H },
       } as any);
     } catch {
-      // ignore image fetch errors; continue
+      // image missing? continue anyway
     }
   }
 
-  // -------- Product slides --------
+  // ---------- OPTIONAL TITLE SLIDE ----------
+  pptx.addSlide().addText(
+    [
+      { text: projectName, options: { fontSize: 28, bold: true } },
+      { text: clientName ? `\nClient: ${clientName}` : "", options: { fontSize: 18 } },
+      { text: contactName ? `\nPrepared by: ${contactName}` : "", options: { fontSize: 16 } },
+      { text: email ? `\nEmail: ${email}` : "", options: { fontSize: 14 } },
+      { text: phone ? `\nPhone: ${phone}` : "", options: { fontSize: 14 } },
+      { text: date ? `\nDate: ${date}` : "", options: { fontSize: 14 } },
+    ],
+    { x: 0.6, y: 0.6, w: 12, h: 6 }
+  );
+
+  // ---------- PRODUCT SLIDES ----------
   for (const p of selected) {
     const s = pptx.addSlide();
 
-    // product image (left)
+    // left: image
     try {
       if (p.imageProxied) {
         const dataUrl = await urlToDataUrl(p.imageProxied);
@@ -83,68 +104,37 @@ export async function exportPptx(
         } as any);
       }
     } catch {
-      // no image, just skip
+      // continue without image
     }
 
-    // text (right)
+    // right: text blocks
+    s.addText(title(p.name), { x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true });
+    if (p.code) {
+      s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.4, w: 6.2, h: 0.4, fontSize: 12 });
+    }
+
     const lines: string[] = [];
     if (p.description) lines.push(p.description);
-    if (p.specsBullets?.length)
-      lines.push("• " + p.specsBullets.join("\n• "));
+    if (p.specsBullets?.length) lines.push("• " + p.specsBullets.join("\n• "));
     if (p.category) lines.push(`\nCategory: ${p.category}`);
 
-    s.addText(title(p.name), {
-      x: 6.2,
-      y: 0.7,
-      w: 6.2,
-      h: 0.6,
-      fontSize: 20,
-      bold: true,
-    });
-
-    if (p.code) {
-      s.addText(`SKU: ${p.code}`, {
-        x: 6.2,
-        y: 1.4,
-        w: 6.2,
-        h: 0.4,
-        fontSize: 12,
-      });
-    }
-
-    s.addText(lines.join("\n"), {
-      x: 6.2,
-      y: 1.9,
-      w: 6.2,
-      h: 3.7,
-      fontSize: 12,
-    });
+    s.addText(lines.join("\n"), { x: 6.2, y: 1.9, w: 6.2, h: 3.7, fontSize: 12 });
 
     if (p.url) {
       s.addText("Product page", {
-        x: 6.2,
-        y: 5.8,
-        w: 6.2,
-        h: 0.4,
-        fontSize: 12,
-        underline: true,
-        hyperlink: { url: p.url },
+        x: 6.2, y: 5.8, w: 6.2, h: 0.4, fontSize: 12, underline: true,
+        hyperlink: { url: p.url }
       });
     }
     if (p.pdfUrl) {
       s.addText("Spec sheet (PDF)", {
-        x: 6.2,
-        y: 6.2,
-        w: 6.2,
-        h: 0.4,
-        fontSize: 12,
-        underline: true,
-        hyperlink: { url: p.pdfUrl },
+        x: 6.2, y: 6.2, w: 6.2, h: 0.4, fontSize: 12, underline: true,
+        hyperlink: { url: p.pdfUrl }
       });
     }
   }
 
-  // -------- Back pages (warranty then service) --------
+  // ---------- BACK PAGES (warranty then service) ----------
   for (const url of BACK_URLS) {
     try {
       const dataUrl = await urlToDataUrl(url);
@@ -162,7 +152,6 @@ export async function exportPptx(
     }
   }
 
-  const filename = `${(header.projectName || "Selection")
-    .replace(/[^\w-]+/g, "_")}.pptx`;
+  const filename = `${(projectName || "Selection").replace(/[^\w-]+/g, "_")}.pptx`;
   await pptx.writeFile({ fileName: filename });
 }
