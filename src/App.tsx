@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
+import { exportPptx } from "./lib/exportPptx";
+
+// inside your button handler:
+await exportPptx(selectedList, {
+  projectName,
+  clientName,
+  contactName,
+  email,
+  phone,
+  date,
+});
 
 
 // utils
