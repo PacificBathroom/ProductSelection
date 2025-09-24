@@ -59,7 +59,7 @@ export default function App() {
   }, [items, q, cat, sort]);
 
   // header form
-  const [projectName, setProjectName] = useState("Project Selection");
+  const [projectName, setProjectName] = useState("Product Presentation");
   const [clientName, setClientName] = useState("");
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
@@ -68,7 +68,10 @@ export default function App() {
 
   // export handler (calls src/lib/exportPptx.ts)
   async function onExportClick() {
-    if (selectedList.length === 0) return alert("Select at least one product.");
+    if (selectedList.length === 0) {
+      alert("Select at least one product.");
+      return;
+    }
     await exportPptx({
       projectName,
       clientName,
@@ -151,7 +154,11 @@ export default function App() {
           onChange={(e) => setQ(e.target.value)}
         />
 
-        <select className="category" value={cat} onChange={(e) => setCat(e.target.value)}>
+        <select
+          className="category"
+          value={cat}
+          onChange={(e) => setCat(e.target.value)}
+        >
           {categories.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -170,21 +177,11 @@ export default function App() {
 
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
-        <button
-  className="primary"
-  onClick={() =>
-    exportPptx({
-      projectName,
-      clientName,
-      contactName,
-      email,
-      phone,
-      date,
-      items: selectedList,
-    })
-  }
->
-       
+
+        <button className="primary" onClick={onExportClick}>
+          Export PPTX
+        </button>
+      </div>
 
       {/* status */}
       {err && <p className="error">Error: {err}</p>}
@@ -198,12 +195,19 @@ export default function App() {
           return (
             <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
               <label className="checkbox">
-                <input type="checkbox" checked={isSel} onChange={() => toggle(p)} />
+                <input
+                  type="checkbox"
+                  checked={isSel}
+                  onChange={() => toggle(p)}
+                />
               </label>
 
               <div className="thumb">
                 {p.imageProxied ? (
-                  <img src={p.imageProxied} alt={p.name || p.code || "product"} />
+                  <img
+                    src={p.imageProxied}
+                    alt={p.name || p.code || "product"}
+                  />
                 ) : (
                   <div className="ph">No image</div>
                 )}
@@ -239,7 +243,9 @@ export default function App() {
                   )}
                 </div>
 
-                {p.category && <div className="category">Category: {p.category}</div>}
+                {p.category && (
+                  <div className="category">Category: {p.category}</div>
+                )}
               </div>
             </div>
           );
