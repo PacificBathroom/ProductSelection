@@ -1,52 +1,65 @@
 // src/lib/products.ts
 import type { Product } from "../types";
 
-type Raw = string[];
+function normalizeSpecs(raw?: string): string[] {
+  let s = (raw ?? "").toString();
 
-// Fetch rows from your /api/sheets
-export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
+  // unify newlines
+  s = s.replace(/\r\n?/g, "\n");
+
+  // turn typical bullet markers into new lines
+  s = s
+    .replace(/[•▪◦·]/g, "\n")        // bullets to newline
+    .replace(/(\n|^)\s*-\s+/g, "\n")  // "- bullet"
+    .replace(/(\n|^)\s*–\s+/g, "\n")  // en dash bullet
+    .replace(/;/g, "\n");             // semicolons to newline
+
+  // split, trim, de-dup, drop URLs and empties
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of s.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    if (/^https?:\/\//i.test(t)) continue;
+    if (seen.has(t.toLowerCase())) continue;
+    seen.add(t.toLowerCase());
+    out.push(t);
+  }
+  return out;
+}
+
+export async function fetchProducts(range: string): Promise<Product[]> {
   const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
+  if (!r.ok) throw new Error(`Sheets ${r.status}`);
   const data = await r.json();
-  const rows: Raw[] = data.values ?? [];
-  if (!rows.length) return [];
 
-  const hdr = rows[0].map((h: string) => (h || "").trim());
-  const idx = Object.fromEntries(hdr.map((h: string, i: number) => [h, i])) as Record<string, number>;
+  const rows: any[][] = data.values ?? [];
+  // Header: Select | Url | Code | Name | ImageURL | Description | SpecsBullets | PdfURL | ContactName | ContactEmail | ContactPhone | ContactAddress | Category
+  const products: Product[] = rows
+    .slice(1) // skip header
+    .map((raw) => {
+      const url          = (raw[1] ?? "").toString().trim();
+      const code         = (raw[2] ?? "").toString().trim();
+      const name         = (raw[3] ?? "").toString().trim();
+      const imageUrl     = (raw[4] ?? "").toString().trim();
+      const description  = (raw[5] ?? "").toString();
+      const specsRaw     = (raw[6] ?? "").toString();
+      const pdfUrl       = (raw[7] ?? "").toString().trim();
+      const category     = (raw[12] ?? "").toString().trim();
 
-  const list: Product[] = rows.slice(1).map((raw: Raw) => {
-    const get = (name: string) => String(raw[idx[name]] ?? "").trim();
-    const name = get("Name");
-    const code = get("Code");
-    const url = get("Url");
-    const imageUrl = get("ImageURL");
-    const description = get("Description");
-    const pdfUrl = get("PdfURL");
-    const category = get("Category");
+      // use file-proxy for images to avoid CORS when converting to dataURL for pptx
+      const imageProxied = imageUrl ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}` : "";
 
-    // robust bullet parsing
-    const rawBullets = get("SpecsBullets");
-    const specsBullets = rawBullets
-      ? rawBullets.split(/\r?\n|[•;]|\u2022/g).map(s => s.trim()).filter(Boolean)
-      : [];
+      return {
+        url, code, name, imageUrl, imageProxied,
+        description,
+        specsBullets: normalizeSpecs(specsRaw),
+        pdfUrl,
+        category,
+      } as Product;
+    })
+    // keep empty rows out
+    .filter(p => p.name || p.code || p.url || p.imageUrl);
 
-    const imageProxied = imageUrl
-      ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}`
-      : "";
-
-    return {
-      name: name || "",
-      code: code || "",
-      url: url || "",
-      imageUrl,
-      imageProxied,
-      description,
-      specsBullets,
-      pdfUrl,
-      category,
-    } as Product;
-  });
-
-  // keep original sheet order
-  return list.filter(Boolean);
+  return products;
 }
