@@ -31,6 +31,11 @@ export async function fetchProducts(range: string): Promise<Product[]> {
 
   const rows: string[][] = data.values ?? [];
   if (!rows.length) return [];
+const specsBullets =
+  String(row[idx.SpecsBullets] || "")
+    .split(/\r?\n|[•;]|\u2022/g)
+    .map(s => s.trim())
+    .filter(Boolean);
 
   const [header, ...body] = rows;
   const idx = (name: string) =>
