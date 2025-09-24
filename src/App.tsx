@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
-import { fetchProducts } from "./lib/products";
+import { exportPptx } from "./lib/exportPptx";
+
+// ...
+<button
+  className="primary"
+  onClick={() =>
+    exportPptx(selectedList, { projectName, clientName, contactName, email, phone, date })
+  }
+>
+  Export PPTX
+</button>
+
 
 // ---- helpers ---------------------------------------------------------------
 
