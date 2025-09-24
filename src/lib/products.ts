@@ -1,104 +1,93 @@
 // src/lib/products.ts
-import { sheetsUrl, proxyUrl } from "./api";
 import type { Product } from "../types";
+import { proxyUrl } from "./api";
 
-const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Accept URLs that contain ".pdf" anywhere before query/hash (case-insensitive) */
+const PDF_REGEX = /\.pdf(?=($|[?#]))/i;
 
-// extract URL if cell uses IMAGE("https://...")
-const urlFromImageFormula = (v: unknown): string | undefined => {
-  if (typeof v !== "string") return undefined;
-  const m = v.trim().match(/^=*\s*image\s*\(\s*"([^"]+)"\s*(?:,.*)?\)\s*$/i);
-  return m?.[1];
-};
-
-const coerceString = (v: unknown) => (v == null ? undefined : String(v).trim() || undefined);
-const coerceImageUrl = (v: unknown) => urlFromImageFormula(v) || coerceString(v);
-
-// split specs text into bullets (lines/semicolons/• bullets)
-const splitBullets = (v: unknown): string[] | undefined => {
-  const s = coerceString(v);
-  if (!s) return undefined;
-  return s.split(/\r?\n|;|•/g).map(t => t.trim()).filter(Boolean);
-};
-
-// normalized header name -> Product key path
-const KEY_MAP: Record<string, string> = {
-  select: "select",
-  url: "url",
-  code: "code",
-  name: "name",
-  imageurl: "imageUrl",
-  description: "description",
-  specsbullets: "specsBullets",
-  pdfurl: "pdfUrl",
-  category: "category",
-
-  contactname: "contact.name",
-  contactemail: "contact.email",
-  contactphone: "contact.phone",
-  contactaddress: "contact.address",
-};
-
-function assignPath(obj: any, path: string, value: unknown) {
-  const parts = path.split(".");
-  let cur = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    const k = parts[i];
-    if (cur[k] == null || typeof cur[k] !== "object") cur[k] = {};
-    cur = cur[k];
-  }
-  cur[parts[parts.length - 1]] = value;
+function cleanUrl(s?: string | null): string | null {
+  if (!s) return null;
+  let u = String(s).trim();
+  if (!u) return null;
+  // collapse internal whitespace and encode spaces
+  u = u.replace(/\s+/g, " ").trim().replace(/ /g, "%20");
+  // add https if missing protocol
+  if (/^\/\//.test(u)) u = "https:" + u;
+  else if (!/^https?:\/\//i.test(u) && /^www\./i.test(u)) u = "https://" + u;
+  // otherwise leave as-is
+  return u;
 }
 
+function normalizePdfUrl(s?: string | null): string | null {
+  const u = cleanUrl(s);
+  if (!u) return null;
+  if (!PDF_REGEX.test(u)) return null; // only treat as PDF if it *looks* like a pdf
+  return u;
+}
+
+/** case-insensitive header lookup */
+function idxOf(headers: string[], name: string): number {
+  const n = name.toLowerCase();
+  return headers.findIndex(h => h?.toLowerCase() === n);
+}
+
+type Row = (string | null | undefined)[];
+
 export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
-  const url = `${sheetsUrl}?as=objects&range=${encodeURIComponent(range)}`;
-  const r = await fetch(url);
+  const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
+  const data = await r.json();
+  const values: Row[] = data.values ?? [];
+  if (values.length < 2) return [];
 
-  // ✅ define the JSON we use below
-  const json = (await r.json()) as { values?: Record<string, unknown>[] };
+  const headers = (values[0] as string[]).map(h => (h ?? "").toString().trim());
+  const out: Product[] = [];
 
-  // ✅ rows typed; no 'any'
-  const rows: Record<string, unknown>[] = json.values ?? [];
+  // common headers (case-insensitive)
+  const hSelect   = idxOf(headers, "Select");
+  const hUrl      = idxOf(headers, "Url");
+  const hCode     = idxOf(headers, "Code");
+  const hName     = idxOf(headers, "Name");
+  const hImageURL = idxOf(headers, "ImageURL");
+  const hDesc     = idxOf(headers, "Description");
+  const hSpecs    = idxOf(headers, "SpecsBullets");
+  const hPdf      = idxOf(headers, "PdfURL");
+  const hCat      = idxOf(headers, "Category");
 
-  const products: Product[] = rows.map((raw: Record<string, unknown>) => {
-    // Build a normalized key view
-    const lower: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(raw)) lower[norm(k)] = v;
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i] || [];
+    const get = (idx: number) => (idx >= 0 ? String(row[idx] ?? "").trim() : "");
 
-    const out: Product = {};
-    // given `raw.SpecsBullets` from the sheet
-const rawSpecs = String(raw.SpecsBullets ?? "").trim();
-const specsBullets = rawSpecs
-  ? rawSpecs.split(/[\r\n;•|,]+/g).map(s => s.trim()).filter(Boolean)
-  : [];
-// ... then include `specsBullets` in the Product you return
+    const url = cleanUrl(get(hUrl)) || undefined;
+    const imageUrl = cleanUrl(get(hImageURL)) || undefined;
+    const pdfUrl = normalizePdfUrl(get(hPdf)) || undefined;
 
+    // Split specs flexibly:
+    // newline / semicolon / bullet dot / pipe / comma / or 2+ spaces
+    const rawSpecs = get(hSpecs);
+    const specsBullets = rawSpecs
+      ? rawSpecs
+          .split(/[\r\n;•|,]+|\s{2,}/g)
+          .map(s => s.trim())
+          .filter(Boolean)
+      : [];
 
-    for (const [kNorm, v] of Object.entries(lower)) {
-      const path = KEY_MAP[kNorm];
-      if (!path) continue;
+    const p: Product = {
+      // keep the fields your UI expects
+      url,
+      code: get(hCode) || undefined,
+      name: get(hName) || undefined,
+      imageUrl,
+      imageProxied: imageUrl ? proxyUrl(imageUrl) : undefined,
+      description: get(hDesc) || undefined,
+      specsBullets: specsBullets.length ? specsBullets : undefined,
+      pdfUrl, // <-- only set when it truly looks like a PDF
+      category: get(hCat) || undefined,
+    };
 
-      if (path === "imageUrl") {
-        const u = coerceImageUrl(v);
-        if (u) {
-          out.imageUrl = u;
-          out.imageProxied = proxyUrl(u);
-        }
-        continue;
-      }
+    // Optionally filter out completely empty rows (no name & no url & no image)
+    if (p.name || p.url || p.imageUrl) out.push(p);
+  }
 
-      if (path === "specsBullets") {
-        assignPath(out, path, splitBullets(v));
-        continue;
-      }
-
-      // string fields (including contact.*)
-      assignPath(out, path, coerceString(v));
-    }
-
-    return out;
-  });
-
-  return products;
+  return out;
 }
