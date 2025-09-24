@@ -172,7 +172,19 @@ async function exportPptx() {
 
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
-        <button className="primary" onClick={handleExport}>
+<button
+  className="primary"
+  onClick={() =>
+    exportSelectionToPptx(selectedList, {
+      projectName,
+      clientName,
+      contactName,
+      email,
+      phone,
+      date,
+    })
+  }
+>
           Export PPTX
         </button>
       </div>
