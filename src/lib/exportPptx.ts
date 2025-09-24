@@ -1,17 +1,16 @@
-// src/lib/exportPptx.ts
-import type { Product } from "@/types";
+import type { Product } from "../types";
 
-// Slide size (pptxgenjs default 16:9)
-const FULL_W = 10;       // inches
+// 16:9 default in pptxgenjs (inches)
+const FULL_W = 10;
 const FULL_H = 5.625;
 
-// Brand images (these paths are in /public so they work on Vercel)
+// Public images in /public/branding/...
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-// Small helpers
-async function blobToDataUrl(b: Blob): Promise<string> {
-  return await new Promise((res) => {
+// Helpers to embed images
+function blobToDataUrl(b: Blob): Promise<string> {
+  return new Promise((res) => {
     const r = new FileReader();
     r.onloadend = () => res(String(r.result));
     r.readAsDataURL(b);
@@ -23,186 +22,134 @@ async function urlToDataUrl(url: string): Promise<string> {
   return blobToDataUrl(b);
 }
 
-function saneText(s?: string) {
-  return (s ?? "").trim();
-}
-function title(s?: string) {
-  const t = saneText(s);
-  return t.length ? t : "—";
-}
+// Join description + bullets into wrapped text
+function buildSpecsText(p: Product): { title: string; lines: string[] } {
+  const title = (p.name ?? p.code ?? "—").trim() || "—";
 
-// Derive bullet points robustly from either SpecsBullets OR Description
-function deriveBullets(p: Product): string[] {
-  const fromSpecs = (p.specsBullets ?? []).map(s => s.trim()).filter(Boolean);
+  const out: string[] = [];
+  if (p.description) out.push(p.description);
 
-  if (fromSpecs.length) {
-    return fromSpecs.slice(0, 14); // keep it tidy
-  }
-
-  // Fallback: parse bullets from Description
-  const d = saneText(p.description);
-  if (!d) return [];
-
-  // split on newlines or bullet markers (- • •· – — ; .)
-  const raw = d
-    .split(/\r?\n/)
-    .flatMap(line => line.split(/(?:^|\s)[•\-–—]\s+/g))
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  // If splitting produced nothing meaningful, just return 1–2 trimmed sentences
-  if (!raw.length) {
-    const sentences = d.split(/(?<=\.)\s+/).map(s => s.trim()).filter(Boolean);
-    return sentences.slice(0, 3);
-  }
-
-  // De-dup and limit
-  const uniq: string[] = [];
-  for (const s of raw) {
-    if (!s) continue;
-    const k = s.toLowerCase();
-    if (!uniq.some(u => u.toLowerCase() === k)) uniq.push(s);
-    if (uniq.length >= 14) break;
-  }
-  return uniq;
-}
-
-// Full-bleed (or contained) image utility — never stretches
-async function addFullSlideImage(pptx: any, url: string, contain = false) {
-  const s = pptx.addSlide();
-  const dataUrl = await urlToDataUrl(url);
-  s.addImage({
-    data: dataUrl,
-    x: 0, y: 0, w: FULL_W, h: FULL_H,
-    sizing: { type: contain ? "contain" : "cover", w: FULL_W, h: FULL_H } as any,
-  });
-  return s;
-}
-
-// Overlay the header details on top of a slide image
-function addCoverOverlay(
-  slide: any,
-  {
-    projectName, clientName, contactName, email, phone, date,
-  }: {
-    projectName?: string; clientName?: string; contactName?: string;
-    email?: string; phone?: string; date?: string;
-  }
-) {
-  const lines = [
-    title(projectName || "Project Selection"),
-    clientName ? `Client: ${clientName}` : "",
-    contactName ? `Prepared by: ${contactName}` : "",
-    email ? `Email: ${email}` : "",
-    phone ? `Phone: ${phone}` : "",
-    date ? `Date: ${date}` : "",
-  ].filter(Boolean);
-
-  if (!lines.length) return;
-
-  // A dark panel at bottom-left with white text
-  slide.addText(
-    lines.join("\n"),
-    {
-      x: 0.4, y: FULL_H - 2.0, w: 6.8, h: 1.7,
-      fontSize: 18,
-      color: "FFFFFF",
-      bold: true,
-      valign: "top",
-      lineSpacingMultiple: 1.1,
-      fill: { color: "000000" },          // panel
-      align: "left",
-      margin: 14,
+  if (p.specsBullets && p.specsBullets.length) {
+    // prepend bullets only if they are not already bullet-ish
+    const bullets = p.specsBullets.map((s) => s.replace(/^[-•]\s*/, "").trim()).filter(Boolean);
+    if (bullets.length) {
+      out.push("• " + bullets.join("\n• "));
     }
-  );
+  }
+
+  if (p.category) out.push(`\nCategory: ${p.category}`);
+  return { title, lines: out };
 }
 
-export async function exportPptx({
-  projectName, clientName, contactName, email, phone, date, items,
-}: {
-  projectName?: string; clientName?: string; contactName?: string;
-  email?: string; phone?: string; date?: string; items: Product[];
+export async function exportPptx(opts: {
+  items: Product[];
+  projectName: string;
+  clientName: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  date: string;
 }) {
+  if (!opts.items?.length) {
+    alert("Select at least one product.");
+    return;
+  }
+
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // ---------- 2 x COVERS ----------
+  // ---------- Covers (two photos, both with overlay text) ----------
+  const overlayRuns = [
+    { text: opts.projectName || "Project Selection", options: { fontSize: 30, bold: true, color: "FFFFFF" } },
+    { text: opts.clientName  ? `\nClient: ${opts.clientName}` : "",   options: { fontSize: 18, color: "FFFFFF" } },
+    { text: opts.contactName ? `\nPrepared by: ${opts.contactName}` : "", options: { fontSize: 16, color: "FFFFFF" } },
+    { text: opts.email       ? `\nEmail: ${opts.email}` : "",        options: { fontSize: 14, color: "FFFFFF" } },
+    { text: opts.phone       ? `\nPhone: ${opts.phone}` : "",        options: { fontSize: 14, color: "FFFFFF" } },
+    { text: opts.date        ? `\nDate: ${opts.date}` : "",          options: { fontSize: 14, color: "FFFFFF" } },
+  ];
+
   for (const url of COVER_URLS) {
-    const slide = await addFullSlideImage(pptx, url, /*contain*/ true);
-    addCoverOverlay(slide, { projectName, clientName, contactName, email, phone, date });
+    const s = pptx.addSlide();
+    try {
+      const dataUrl = await urlToDataUrl(url);
+      // full-bleed image, not stretched
+      s.addImage({ data: dataUrl, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+    } catch { /* ignore */ }
+    // dark band + white overlay text (bottom)
+    s.addText(overlayRuns, {
+      x: 0.5, y: FULL_H - 1.9, w: FULL_W - 1.0, h: 1.6,
+      align: "left",
+      fill: { color: "000000" }, // black background behind the text
+      color: "FFFFFF",
+      bold: true,
+    });
   }
 
-  // ---------- PRODUCT SLIDES ----------
-  for (const p of items) {
+  // ---------- Product slides ----------
+  for (const p of opts.items) {
     const s = pptx.addSlide();
 
-    // Left: product image (proxied so CORS is fine)
+    // left: image (contain to avoid stretch)
     if (p.imageProxied) {
       try {
-        const imgData = await urlToDataUrl(p.imageProxied);
+        const dataUrl = await urlToDataUrl(p.imageProxied);
         s.addImage({
-          data: imgData,
-          x: 0.3, y: 0.6, w: 4.9, h: 4.2,
-          sizing: { type: "contain", w: 4.9, h: 4.2 } as any,
-        });
-      } catch {
-        // ignore image fetch errors
-      }
+          data: dataUrl,
+          x: 0.5, y: 0.7, w: 5.5, h: 4.1,
+          sizing: { type: "contain", w: 5.5, h: 4.1 },
+        } as any);
+      } catch { /* ignore */ }
     }
 
-    // Right: title + sku
-    s.addText(title(p.name), { x: 5.6, y: 0.6, w: 4.2, h: 0.6, fontSize: 22, bold: true });
+    const { title, lines } = buildSpecsText(p);
+
+    // right: title + sku
+    s.addText(title, { x: 6.2, y: 0.7, w: 3.8, h: 0.7, fontSize: 20, bold: true, color: "222222" });
     if (p.code) {
-      s.addText(`SKU: ${p.code}`, { x: 5.6, y: 1.2, w: 4.2, h: 0.4, fontSize: 12 });
-    }
-    if (p.category) {
-      s.addText(`Category: ${p.category}`, { x: 5.6, y: 1.6, w: 4.2, h: 0.4, fontSize: 12 });
+      s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.35, w: 3.8, h: 0.4, fontSize: 12, color: "444444" });
     }
 
-    // Description (shortened so it doesn't overflow)
-    const desc = saneText(p.description).slice(0, 600); // cap length
-    if (desc) {
-      s.addText(desc, {
-        x: 5.6, y: 2.1, w: 4.2, h: 1.1,
+    // right: description/specs block, wrapped & compact
+    if (lines.length) {
+      s.addText(lines.join("\n"), {
+        x: 6.2, y: 1.8, w: 3.8, h: 3.9,
         fontSize: 12,
-        valign: "top",
-      });
+        color: "222222",
+        // Helps large blobs fit better (pptxgenjs option)
+        shrinkText: true,
+      } as any);
     }
 
-    // Specs bullets (robust parse + true bullets)
-    const bullets = deriveBullets(p);
-    if (bullets.length) {
-      const bulletTexts = bullets.map(t => ({ text: t, options: { bullet: true, fontSize: 12 } }));
-      s.addText(bulletTexts as any, {
-        x: 5.6, y: 3.25, w: 4.2, h: 1.9,
-        valign: "top",
-      });
-    }
-
-    // Links
-    let linkY = 5.3;
+    // links row
+    const linkY = 5.9;
     if (p.url) {
       s.addText("Product page", {
-        x: 5.6, y: linkY, w: 4.2, h: 0.35, fontSize: 12, underline: true,
+        x: 6.2, y: linkY, w: 3.8, h: 0.35, fontSize: 12,
+        underline: true,
         hyperlink: { url: p.url },
-        color: "1d4ed8",
+        color: "1155CC",
       });
-      linkY += 0.4;
     }
     if (p.pdfUrl) {
       s.addText("Spec sheet (PDF)", {
-        x: 5.6, y: linkY, w: 4.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: p.pdfUrl },
-        color: "1d4ed8",
+        x: 6.2, y: linkY + 0.35, w: 3.8, h: 0.35, fontSize: 12,
+        underline: true,
+        // use your pdf proxy so it always downloads/opens reliably
+        hyperlink: { url: `/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}` },
+        color: "1155CC",
       });
     }
   }
 
-  // ---------- 2 x BACK PAGES (Warranty then Service) ----------
+  // ---------- Back pages ----------
   for (const url of BACK_URLS) {
-    await addFullSlideImage(pptx, url, /*contain*/ true);
+    const s = pptx.addSlide();
+    try {
+      const dataUrl = await urlToDataUrl(url);
+      s.addImage({ data: dataUrl, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+    } catch { /* ignore */ }
   }
 
-  const filename = `${(projectName || "Selection").replace(/[^\w-]+/g, "_")}.pptx`;
-  await pptx.writeFile({ fileName: filename });
+  const safe = (opts.projectName || "Selection").replace(/[^\w-]+/g, "_");
+  await pptx.writeFile({ fileName: `${safe}.pptx` });
 }
