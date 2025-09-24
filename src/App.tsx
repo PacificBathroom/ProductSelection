@@ -67,16 +67,20 @@ export default function App() {
   const [date, setDate] = useState("");
 
   // export handler (calls src/lib/exportPptx.ts)
-  async function handleExport() {
-    await exportPptx(selectedList, {
-      projectName,
-      clientName,
-      contactName,
-      email,
-      phone,
-      date,
-    });
-  }
+ import { exportPptxBryant } from "./lib/exportPptx";
+
+// ...inside component, where you had `exportPptx()` before:
+async function exportPptx() {
+  await exportPptxBryant(selectedList, {
+    projectName,
+    clientName,
+    contactName,
+    email,
+    phone,
+    date,
+  });
+}
+
 
   return (
     <div className="wrap">
