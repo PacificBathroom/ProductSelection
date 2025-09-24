@@ -67,6 +67,13 @@ export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> 
     for (const [k, v] of Object.entries(raw)) lower[norm(k)] = v;
 
     const out: Product = {};
+    // given `raw.SpecsBullets` from the sheet
+const rawSpecs = String(raw.SpecsBullets ?? "").trim();
+const specsBullets = rawSpecs
+  ? rawSpecs.split(/[\r\n;•|,]+/g).map(s => s.trim()).filter(Boolean)
+  : [];
+// ... then include `specsBullets` in the Product you return
+
 
     for (const [kNorm, v] of Object.entries(lower)) {
       const path = KEY_MAP[kNorm];
