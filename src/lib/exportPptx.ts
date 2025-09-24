@@ -1,7 +1,7 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-/* ========= Bryant-ish theme ========= */
+/* Theme */
 const THEME = {
   fontH: "Calibri",
   fontB: "Calibri",
@@ -11,13 +11,13 @@ const THEME = {
     band: "F1F5F9",
     link: "2563EB",
     footer: "64748B",
-    overlay: "000000", // for cover text backing
-    overlayAlpha: 30,  // 0-100 (30% opacity)
-    overlayText: "FFFFFF"
+    overlay: "000000",
+    overlayAlpha: 30,   // 0-100 (30% opacity)
+    overlayText: "FFFFFF",
   },
 };
 
-/* ========= Slide geometry (16:9) ========= */
+/* Slide geometry (16:9) */
 const FULL_W = 10;
 const FULL_H = 5.625;
 const PAD = 0.5;
@@ -26,15 +26,15 @@ const PAD = 0.5;
 const IMG_BOX  = { x: PAD,  y: 1.05, w: 5.3, h: 3.9 };
 const NAME_BOX = { x: 5.6,  y: 1.05, w: 4.2, h: 0.6 };
 const SKU_BOX  = { x: 5.6,  y: 1.65, w: 4.2, h: 0.4 };
-const DESC_BOX = { x: 5.6,  y: 2.10, w: 4.2, h: 1.5 };
-const SPEC_BOX = { x: 5.6,  y: 3.70, w: 4.2, h: 1.6 };
+const DESC_BOX = { x: 5.6,  y: 2.10, w: 4.2, h: 1.35 };
+const SPEC_BOX = { x: 5.6,  y: 3.55, w: 4.2, h: 1.75 };
 const LINK_BOX = { x: 5.6,  y: 5.40, w: 4.2, h: 0.8 };
 
-/* ========= Static asset paths (public/) ========= */
+/* Asset paths served from /public */
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/* ========= Helpers ========= */
+/* Helpers */
 function clampChars(s: string, max: number) {
   if (!s) return "";
   if (s.length <= max) return s;
@@ -43,14 +43,33 @@ function clampChars(s: string, max: number) {
   return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
 }
 
-// Split bullets regardless of delimiter: newline, semicolon, bullet dot, pipe, or comma.
-function splitBullets(source?: string | string[]) {
-  if (!source) return [];
-  if (Array.isArray(source)) return source.filter(Boolean).map(x => String(x).trim()).filter(Boolean);
-  return String(source)
-    .split(/[\r\n;•|,]+/g)
+// Split bullets on newline, semicolon, bullet dot, pipe, comma, or **2+ spaces**
+function splitFlex(text: string) {
+  return text
+    .split(/[\r\n;•|,]+|\s{2,}/g)
     .map(t => t.trim())
     .filter(Boolean);
+}
+
+// Build bullets from any product fields that might contain specs
+function getSpecLines(p: Product) {
+  // 1) If already an array, use it
+  if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
+    return p.specsBullets.map(s => String(s).trim()).filter(Boolean);
+  }
+  // 2) Try common fields (SpecsBullets, specs, etc.)
+  const candidates = [
+    (p as any).SpecsBullets,
+    (p as any).specsBullets,
+    (p as any).specs,
+    (p as any).Specs,
+  ].map(v => (v == null ? "" : String(v))).filter(Boolean);
+
+  // 3) If still empty, fall back to the product description (your sheet often puts specs-like text there)
+  if (!candidates.length && p.description) candidates.push(p.description);
+
+  const raw = candidates.find(t => t && t.trim()) || "";
+  return splitFlex(raw);
 }
 
 function bulletsText(lines: string[], maxItems: number) {
@@ -71,7 +90,7 @@ async function urlToDataUrl(url: string): Promise<string> {
   return blobToDataUrl(b);
 }
 
-/* ========= Footer ========= */
+/* Footer */
 function addFooter(s: any, pageNum?: number) {
   const text = pageNum ? `Page ${pageNum}  |  Pacific Bathroom` : `Pacific Bathroom`;
   s.addText(text, {
@@ -80,7 +99,7 @@ function addFooter(s: any, pageNum?: number) {
   });
 }
 
-/* ========= Grouping ========= */
+/* Grouping */
 function groupByCategory(products: Product[]) {
   const order: string[] = [];
   const map: Record<string, Product[]> = {};
@@ -92,9 +111,8 @@ function groupByCategory(products: Product[]) {
   return { order, map };
 }
 
-/* ========= Slides ========= */
+/* Slides */
 
-// NEW: Cover with full bleed image + overlay text (Project + Client)
 type FormDataLike = {
   projectName: string;
   clientName: string;
@@ -104,14 +122,23 @@ type FormDataLike = {
   date: string;
 };
 
+// Cover with **non-stretched** image and overlay band text
 async function addCoverSlide(pptx: any, url: string, form: FormDataLike) {
   const s = pptx.addSlide();
+
+  // Black background so letterboxing looks deliberate
+  s.addShape(pptx.ShapeType.rect, {
+    x: 0, y: 0, w: FULL_W, h: FULL_H,
+    fill: { color: "000000" }, line: { color: "000000" }
+  });
+
+  // Image with "contain" so it never stretches
   try {
     const dataUrl = await urlToDataUrl(url);
-    s.addImage({ data: dataUrl, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } as any });
-  } catch { /* ignore image fetch errors */ }
+    s.addImage({ data: dataUrl, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "contain", w: FULL_W, h: FULL_H } as any });
+  } catch {}
 
-  // Semi-transparent overlay band so text is readable on any photo
+  // Overlay band + text (Project + Client)
   const bandH = 1.2;
   s.addShape(pptx.ShapeType.rect, {
     x: 0, y: FULL_H - bandH, w: FULL_W, h: bandH,
@@ -127,24 +154,8 @@ async function addCoverSlide(pptx: any, url: string, form: FormDataLike) {
       { text: title,  options: { fontSize: 24, bold: true, color: THEME.color.overlayText, fontFace: THEME.fontH } },
       { text: client ? `\n${client}` : "", options: { fontSize: 16, color: THEME.color.overlayText, fontFace: THEME.fontB } },
     ],
-    { x: PAD, y: FULL_H - bandH + 0.2, w: FULL_W - PAD * 2, h: bandH - 0.3, valign: "middle" }
+    { x: PAD, y: FULL_H - bandH + 0.22, w: FULL_W - PAD * 2, h: bandH - 0.3, valign: "middle" }
   );
-}
-
-function addTitleSlide(pptx: any, form: FormDataLike) {
-  const s = pptx.addSlide();
-  s.addText(
-    [
-      { text: form.projectName || "Project Selection", options: { fontSize: 30, bold: true, color: THEME.color.ink, fontFace: THEME.fontH } },
-      { text: form.clientName ? `\nClient: ${form.clientName}` : "", options: { fontSize: 18, color: THEME.color.sub, fontFace: THEME.fontB } },
-      { text: form.contactName ? `\nPrepared by: ${form.contactName}` : "", options: { fontSize: 16, color: THEME.color.sub, fontFace: THEME.fontB } },
-      { text: form.email ? `\nEmail: ${form.email}` : "", options: { fontSize: 14, color: THEME.color.sub, fontFace: THEME.fontB } },
-      { text: form.phone ? `\nPhone: ${form.phone}` : "", options: { fontSize: 14, color: THEME.color.sub, fontFace: THEME.fontB } },
-      { text: form.date ? `\nDate: ${form.date}` : "", options: { fontSize: 14, color: THEME.color.sub, fontFace: THEME.fontB } },
-    ],
-    { x: PAD, y: PAD, w: FULL_W - PAD * 2, h: FULL_H - PAD * 2 }
-  );
-  addFooter(s);
 }
 
 function addCategorySlide(pptx: any, category: string, pageNum: number) {
@@ -160,7 +171,7 @@ function addCategorySlide(pptx: any, category: string, pageNum: number) {
 async function addProductSlide(pptx: any, p: Product, pageNum: number) {
   const s = pptx.addSlide();
 
-  // Image left
+  // Image left (contain)
   try {
     if (p.imageProxied) {
       const dataUrl = await urlToDataUrl(p.imageProxied);
@@ -172,19 +183,12 @@ async function addProductSlide(pptx: any, p: Product, pageNum: number) {
   s.addText((p.name ?? "—").trim(), { ...NAME_BOX, fontSize: 20, bold: true, color: THEME.color.ink, fontFace: THEME.fontH });
   if (p.code) s.addText(`SKU: ${p.code}`, { ...SKU_BOX, fontSize: 12, color: THEME.color.sub, fontFace: THEME.fontB });
 
-  // Description (clamped)
-  const desc = clampChars(p.description ?? "", 450);
+  // Description (shorter clamp to prevent overflow)
+  const desc = clampChars(p.description ?? "", 320);
   if (desc) s.addText(desc, { ...DESC_BOX, fontSize: 12, color: THEME.color.sub, valign: "top", fontFace: THEME.fontB });
 
-  // SPECS — accept array or single string with mixed delimiters
-  const candidate =
-    (p.specsBullets && p.specsBullets.length ? p.specsBullets : undefined) ??
-    (p as any).specsRaw ??
-    (p as any).specsbullets ??
-    (p as any).SpecsBullets ??
-    "";
-
-  const specLines = splitBullets(candidate);
+  // SPECS (robust)
+  const specLines = getSpecLines(p);
   const specs = bulletsText(specLines, 6);
   if (specs) s.addText(specs, { ...SPEC_BOX, fontSize: 12, color: THEME.color.sub, valign: "top", fontFace: THEME.fontB });
 
@@ -208,23 +212,18 @@ async function addProductSlide(pptx: any, p: Product, pageNum: number) {
   addFooter(s, pageNum);
 }
 
-/* ========= Public API ========= */
+/* Main export */
 export async function exportPptxBryant(selectedProducts: Product[], form: FormDataLike) {
   if (!selectedProducts?.length) { alert("Select at least one product."); return; }
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
-
   let pageNum = 1;
 
-  // COVERS with overlay text (Project + Client on both)
+  // Exactly two covers with overlay text (no extra title slide)
   for (const url of COVER_URLS) {
     await addCoverSlide(pptx, url, form);
     pageNum++;
   }
-
-  // Title page
-  addTitleSlide(pptx, form);
-  pageNum++;
 
   // Category dividers + product pages
   const { order, map } = groupByCategory(selectedProducts);
@@ -233,12 +232,14 @@ export async function exportPptxBryant(selectedProducts: Product[], form: FormDa
     for (const p of map[cat]) await addProductSlide(pptx, p, pageNum++);
   }
 
-  // Back pages
+  // Back pages (warranty then service), non-stretch
   for (const url of BACK_URLS) {
     const s = pptx.addSlide();
+    // black bg
+    s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: FULL_W, h: FULL_H, fill: { color: "000000" }, line: { color: "000000" } });
     try {
       const dataUrl = await urlToDataUrl(url);
-      s.addImage({ data: dataUrl, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } as any });
+      s.addImage({ data: dataUrl, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "contain", w: FULL_W, h: FULL_H } as any });
     } catch {}
     pageNum++;
   }
