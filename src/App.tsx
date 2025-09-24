@@ -69,17 +69,14 @@ export default function App() {
   // export handler (calls src/lib/exportPptx.ts)
  import { exportPptxBryant } from "./lib/exportPptx";
 
-// ...inside component, where you had `exportPptx()` before:
-async function exportPptx() {
-  await exportPptxBryant(selectedList, {
-    projectName,
-    clientName,
-    contactName,
-    email,
-    phone,
-    date,
+async function onExportClick() {
+  if (selectedList.length === 0) return alert("Select at least one product.");
+  await exportPptx({
+    projectName, clientName, contactName, email, phone, date,
+    items: selectedList,
   });
 }
+
 
 
   return (
@@ -172,19 +169,8 @@ async function exportPptx() {
 
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
-<button
-  className="primary"
-  onClick={() =>
-    exportSelectionToPptx(selectedList, {
-      projectName,
-      clientName,
-      contactName,
-      email,
-      phone,
-      date,
-    })
-  }
->
+<button className="primary" onClick={onExportClick}>Export PPTX</button>
+
           Export PPTX
         </button>
       </div>
