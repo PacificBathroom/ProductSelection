@@ -1,49 +1,58 @@
-import type { Product } from "../types";
+// src/lib/products.ts
+import type { Product } from "@/types";
 
-// Turn a Google Sheets cell into an array of clean bullet points.
-function splitSpecs(raw?: string): string[] {
-  if (!raw) return [];
-  return String(raw)
-    .split(/\r?\n|[•\u2022]|[|;]|\t/g)       // newline, •, |, ;, tab
-    .map(s => s.replace(/\s+/g, " ").trim()) // collapse spaces
-    .filter(Boolean);
-}
-
-export async function fetchProducts(range: string): Promise<Product[]> {
+export async function fetchProducts(range = "Products!A:Z"): Promise<Product[]> {
   const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, { cache: "no-store" });
   if (!r.ok) throw new Error(`Sheets HTTP ${r.status}`);
   const data = await r.json();
-  const rows: string[][] = data.values ?? [];
-  const [header, ...body] = rows;
+  const rows: string[][] = data?.values ?? [];
+  if (!rows.length) return [];
 
-  const idx = (name: string) =>
-    header.findIndex(h => (h ?? "").trim().toLowerCase() === name.toLowerCase());
+  const header = rows[0].map((h: string) => (h || "").trim());
+  const idx = (name: string) => header.indexOf(name);
 
-  const iUrl  = idx("Url");
+  const iSel = idx("Select");
+  const iUrl = idx("Url");
   const iCode = idx("Code");
   const iName = idx("Name");
-  const iImg  = idx("ImageURL");
+  const iImage = idx("ImageURL");
   const iDesc = idx("Description");
-  const iSpec = idx("SpecsBullets");
+  const iSpecs = idx("SpecsBullets");
   const iPdf  = idx("PdfURL");
   const iCat  = idx("Category");
 
-  const products: Product[] = body.map(row => {
-    const imageUrl = (row[iImg] ?? "").toString().trim() || undefined;
-    const pdfUrl   = (row[iPdf] ?? "").toString().trim() || undefined;
+  const products: Product[] = rows.slice(1).map((raw: string[]) => {
+    const pick = (i: number) => (i >= 0 ? (raw[i] ?? "").trim() : "");
+
+    const url = pick(iUrl);
+    const code = pick(iCode);
+    const name = pick(iName);
+    const description = pick(iDesc);
+    const imageUrl = pick(iImage);
+    const pdfUrl = pick(iPdf);
+    const category = pick(iCat);
+
+    // robust parse of specs
+    const specsRaw = pick(iSpecs);
+    const specsBullets = (specsRaw
+      ? specsRaw
+          .split(/\r?\n|;|•/g)
+          .flatMap(s => s.split(/(?:^|\s)[\-–—]\s+/g))
+          .map(s => s.trim())
+          .filter(Boolean)
+      : []
+    ).slice(0, 20);
+
+    // use the proxy for images so CORS is never a problem (also works in PPTX)
+    const imageProxied = imageUrl ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}` : "";
 
     return {
-      url:        (row[iUrl]  ?? "").toString().trim() || undefined,
-      code:       (row[iCode] ?? "").toString().trim() || undefined,
-      name:       (row[iName] ?? "").toString().trim() || undefined,
-      imageUrl,
-      imageProxied: imageUrl ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}` : undefined,
-      description: (row[iDesc] ?? "").toString().trim() || undefined,
-      specsBullets: splitSpecs((row[iSpec] ?? "").toString()),
-      pdfUrl,
-      category:   (row[iCat]  ?? "").toString().trim() || undefined,
+      url, code, name, description, pdfUrl, category,
+      imageUrl, imageProxied,
+      specsBullets,
     } as Product;
   });
 
-  return products;
+  // keep original order as in sheet (optionally filter by "Select" if used)
+  return products.filter(p => p.name || p.code || p.url);
 }
