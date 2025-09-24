@@ -170,8 +170,21 @@ export default function App() {
 
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
-        <button className="primary" onClick={onExportClick}>Export PPTX</button>
-      </div>
+        <button
+  className="primary"
+  onClick={() =>
+    exportPptx({
+      projectName,
+      clientName,
+      contactName,
+      email,
+      phone,
+      date,
+      items: selectedList,
+    })
+  }
+>
+       
 
       {/* status */}
       {err && <p className="error">Error: {err}</p>}
