@@ -14,8 +14,8 @@ export type HeaderData = {
 const FULL_W = 10;       // pptxgenjs 16:9 width (inches)
 const FULL_H = 5.625;    // pptxgenjs 16:9 height (inches)
 
-const COVER_URLS = ["/pptx/cover1.jpg", "/pptx/cover2.jpg"];
-const BACK_URLS  = ["/pptx/warranty.jpg", "/pptx/service.jpg"];
+const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
+const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 const title = (s?: string) => (s ?? "").trim() || "—";
 
