@@ -1,9 +1,10 @@
+// src/App.tsx
 import { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
 import { exportPptx } from "./lib/exportPptx";
 
-// helpers
+// small helpers
 const includes = (h: string, n: string) => h.toLowerCase().includes(n.toLowerCase());
 const title = (s?: string) => (s ?? "").trim() || "—";
 
@@ -66,13 +67,19 @@ export default function App() {
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState("");
 
+  // export
   async function onExportClick() {
     if (selectedList.length === 0) {
       alert("Select at least one product.");
       return;
     }
     await exportPptx({
-      projectName, clientName, contactName, email, phone, date,
+      projectName,
+      clientName,
+      contactName,
+      email,
+      phone,
+      date,
       items: selectedList,
     });
   }
@@ -153,7 +160,9 @@ export default function App() {
           onChange={(e) => setCat(e.target.value)}
         >
           {categories.map((c) => (
-            <option key={c} value={c}>{c}</option>
+            <option key={c} value={c}>
+              {c}
+            </option>
           ))}
         </select>
         <select
@@ -166,7 +175,9 @@ export default function App() {
         </select>
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
-        <button className="primary" onClick={onExportClick}>Export PPTX</button>
+        <button className="primary" onClick={onExportClick}>
+          Export PPTX
+        </button>
       </div>
 
       {/* status */}
@@ -183,6 +194,7 @@ export default function App() {
               <label className="checkbox">
                 <input type="checkbox" checked={isSel} onChange={() => toggle(p)} />
               </label>
+
               <div className="thumb">
                 {p.imageProxied ? (
                   <img src={p.imageProxied} alt={p.name || p.code || "product"} />
@@ -190,10 +202,12 @@ export default function App() {
                   <div className="ph">No image</div>
                 )}
               </div>
+
               <div className="body">
                 <div className="name">{title(p.name)}</div>
                 {p.code && <div className="sku">SKU: {p.code}</div>}
                 {p.description && <p className="desc">{p.description}</p>}
+
                 {p.specsBullets && p.specsBullets.length > 0 && (
                   <ul className="specs">
                     {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
@@ -201,8 +215,13 @@ export default function App() {
                     ))}
                   </ul>
                 )}
+
                 <div className="links">
-                  {p.url && <a href={p.url} target="_blank" rel="noreferrer">Product page</a>}
+                  {p.url && (
+                    <a href={p.url} target="_blank" rel="noreferrer">
+                      Product page
+                    </a>
+                  )}
                   {p.pdfUrl && (
                     <a
                       href={`/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`}
@@ -213,6 +232,7 @@ export default function App() {
                     </a>
                   )}
                 </div>
+
                 {p.category && <div className="category">Category: {p.category}</div>}
               </div>
             </div>
