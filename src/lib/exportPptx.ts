@@ -7,11 +7,15 @@ const FULL_H = 5.625;
 
 // Public asset paths (these files must be in /public/branding/)
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
-const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
+const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 // --- small helpers ---
-function clean(s?: string | null): string { return (s ?? "").trim(); }
-function title(s?: string) { return clean(s) || "—"; }
+function clean(s?: string | null): string {
+  return (s ?? "").trim();
+}
+function title(s?: string) {
+  return clean(s) || "—";
+}
 function bullets(arr?: string[] | null): string[] {
   if (!arr || !arr.length) return [];
   return arr.map((x) => clean(x)).filter((x) => !!x);
@@ -20,7 +24,11 @@ function has(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0;
 }
 function blobToDataUrl(b: Blob): Promise<string> {
-  return new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(String(r.result)); r.readAsDataURL(b); });
+  return new Promise((res) => {
+    const r = new FileReader();
+    r.onloadend = () => res(String(r.result));
+    r.readAsDataURL(b);
+  });
 }
 async function urlToDataUrl(url: string): Promise<string> {
   const r = await fetch(url, { cache: "no-store" });
@@ -37,7 +45,9 @@ function absoluteUrl(u?: string): string | undefined {
       return origin ? new URL(u, origin).href : u;
     }
     return u;
-  } catch { return u; }
+  } catch {
+    return u;
+  }
 }
 
 // Normalize common Google Drive “view” links to direct-download
@@ -58,13 +68,15 @@ function normalizeDrive(u: string): string {
  *
  * Put PDFs in /public/specs so they deploy to /specs/...
  */
-function resolvePdfUrlRaw(p: Product): { url?: string; source?: "PdfFile"|"PdfKey"|"Code"|"PdfURL"|"pdfUrl" } {
+function resolvePdfUrlRaw(
+  p: Product
+): { url?: string; source?: "PdfFile" | "PdfKey" | "Code" | "PdfURL" | "pdfUrl" } {
   const anyp = p as any;
   if (has(anyp.PdfFile)) return { url: `/specs/${anyp.PdfFile.trim()}`, source: "PdfFile" };
-  if (has(anyp.PdfKey))  return { url: `/specs/${anyp.PdfKey.trim()}.pdf`, source: "PdfKey" };
-  if (has(p.code))       return { url: `/specs/${p.code.trim()}.pdf`, source: "Code" };
-  if (has(anyp.PdfURL))  return { url: normalizeDrive(String(anyp.PdfURL).trim()), source: "PdfURL" };
-  if (has(p.pdfUrl))     return { url: normalizeDrive(p.pdfUrl.trim()), source: "pdfUrl" };
+  if (has(anyp.PdfKey)) return { url: `/specs/${anyp.PdfKey.trim()}.pdf`, source: "PdfKey" };
+  if (has(p.code)) return { url: `/specs/${p.code.trim()}.pdf`, source: "Code" };
+  if (has(anyp.PdfURL)) return { url: normalizeDrive(String(anyp.PdfURL).trim()), source: "PdfURL" };
+  if (has(p.pdfUrl)) return { url: normalizeDrive(p.pdfUrl.trim()), source: "pdfUrl" };
   return { url: undefined, source: undefined };
 }
 function resolvePdfUrlAbsolute(p: Product): { url?: string; source?: string } {
@@ -73,7 +85,7 @@ function resolvePdfUrlAbsolute(p: Product): { url?: string; source?: string } {
 }
 
 /** Optional: warn in dev if a local /specs file looks missing (uses absolute URL) */
-async function warnIfMissingLocalSpec(url: string) {
+async function warnIfMissingLocalSpec(url: string): Promise<void> {
   if (!url.includes("/specs/")) return;
   const abs = absoluteUrl(url) || url;
   try {
@@ -97,33 +109,26 @@ type ExportInput = {
 
 // If cover contact fields are blank in the input, pull from the first product that has contact info.
 function getCoverContactFallback(input: ExportInput) {
-  const firstWithContact = input.items.find(p => (p as any).contact && (
-    (p as any).contact.name || (p as any).contact.email || (p as any).contact.phone || (p as any).contact.address
-  )) as any;
+  const firstWithContact = input.items.find((p) => {
+    const c = (p as any).contact;
+    return c && (c.name || c.email || c.phone || c.address);
+  }) as any;
 
   const c = firstWithContact?.contact || {};
   return {
-    name:  has(input.contactName) ? input.contactName : (c.name  || ""),
-    email: has(input.email)       ? input.email       : (c.email || ""),
-    phone: has(input.phone)       ? input.phone       : (c.phone || ""),
-    addr:  has(input.address)     ? input.address     : (c.address || ""),
+    name: has(input.contactName) ? input.contactName : c.name || "",
+    email: has(input.email) ? input.email : c.email || "",
+    phone: has(input.phone) ? input.phone : c.phone || "",
+    addr: has(input.address) ? input.address : c.address || "",
   };
 }
 
-export async function exportPptx({
-  projectName, 
-  clientName, 
-  contactName, 
-  email, 
-  phone, 
-  address, 
-  date, 
-  items
-}: ExportInput) { ... }
-
+export async function exportPptx(input: ExportInput): Promise<void> {
+  const { projectName, clientName, date, items } = input;
 
   // Resolve cover contact fields with fallback
   const cover = getCoverContactFallback(input);
+  // console.debug("[pptx] Cover contact resolved:", cover);
 
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
@@ -132,7 +137,15 @@ export async function exportPptx({
   try {
     const img1 = await urlToDataUrl(COVER_URLS[0]);
     const s = pptx.addSlide();
-    s.addImage({ data: img1, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+    s.addImage({
+      data: img1,
+      x: 0,
+      y: 0,
+      w: FULL_W,
+      h: FULL_H,
+      sizing: { type: "cover", w: FULL_W, h: FULL_H },
+    } as any);
+
     s.addText(
       [
         { text: title(projectName), options: { fontSize: 30, bold: true } },
@@ -140,26 +153,50 @@ export async function exportPptx({
       ],
       { x: 0.6, y: 4.2, w: 8.8, h: 1.1, color: "000000", align: "left" }
     );
-  } catch {}
+  } catch {
+    /* ignore cover load errors */
+  }
 
   // ------------- COVER 2 (rest of the info) -------------
   try {
     const img2 = await urlToDataUrl(COVER_URLS[1]);
     const s = pptx.addSlide();
-    s.addImage({ data: img2, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+    s.addImage({
+      data: img2,
+      x: 0,
+      y: 0,
+      w: FULL_W,
+      h: FULL_H,
+      sizing: { type: "cover", w: FULL_W, h: FULL_H },
+    } as any);
 
     const lines = [
       has(cover.name) ? `Prepared by: ${cover.name}` : "",
       has(cover.email) ? `Email: ${cover.email}` : "",
       has(cover.phone) ? `Phone: ${cover.phone}` : "",
-      has(cover.addr)  ? `Address: ${cover.addr}` : "",
+      has(cover.addr) ? `Address: ${cover.addr}` : "",
       has(date) ? `Date: ${date}` : "",
-    ].filter(Boolean).join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     if (lines) {
-      s.addText(lines, { x: 0.6, y: 4.2, w: 8.8, h: 1.2, fontSize: 18, color: "000000", align: "left" });
+      s.addText({
+        text: lines,
+        options: {
+          x: 0.6,
+          y: 4.2,
+          w: 8.8,
+          h: 1.2,
+          fontSize: 18,
+          color: "000000",
+          align: "left",
+        } as any,
+      });
     }
-  } catch {}
+  } catch {
+    /* ignore cover load errors */
+  }
 
   // ------------- PRODUCT SLIDES -------------
   for (const p of items) {
@@ -171,13 +208,29 @@ export async function exportPptx({
       const imgSrc = (p as any).imageProxied || (p as any).imageUrl;
       if (imgSrc) {
         const dataUrl = await urlToDataUrl(imgSrc);
-        sA.addImage({ data: dataUrl, x: 0.5, y: 0.7, w: 5.6, h: 4.2, sizing: { type: "contain", w: 5.6, h: 4.2 } } as any);
+        sA.addImage({
+          data: dataUrl,
+          x: 0.5,
+          y: 0.7,
+          w: 5.6,
+          h: 4.2,
+          sizing: { type: "contain", w: 5.6, h: 4.2 },
+        } as any);
       }
-    } catch {}
+    } catch {
+      /* ignore image load errors */
+    }
 
     // Right: name + SKU + description + links
     const rightX = 6.2;
-    sA.addText(title((p as any).name), { x: rightX, y: 0.7, w: 6.2, h: 0.6, fontSize: 22, bold: true });
+    sA.addText(title((p as any).name), {
+      x: rightX,
+      y: 0.7,
+      w: 6.2,
+      h: 0.6,
+      fontSize: 22,
+      bold: true,
+    });
 
     if (has(p.code)) {
       sA.addText(`SKU: ${p.code}`, { x: rightX, y: 1.3, w: 6.2, h: 0.35, fontSize: 12 });
@@ -191,45 +244,82 @@ export async function exportPptx({
     // Links on main slide (product page + spec link if desired)
     let linkY = 3.0;
     if (has((p as any).url)) {
+      const productUrlAbs = absoluteUrl((p as any).url)!;
       sA.addText("Product page", {
-        x: rightX, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: absoluteUrl((p as any).url)! }
+        x: rightX,
+        y: linkY,
+        w: 6.2,
+        h: 0.35,
+        fontSize: 12,
+        underline: true,
+        hyperlink: { url: productUrlAbs },
       });
       linkY += 0.4;
     }
 
-    const { url: pdfAbs, source } = resolvePdfUrlAbsolute(p);
+    const { url: pdfAbs } = resolvePdfUrlAbsolute(p);
     if (pdfAbs) {
-      console.debug("[pptx] PDF resolved from", source, "→", pdfAbs);
       sA.addText("Spec sheet (PDF)", {
-        x: rightX, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: pdfAbs }
+        x: rightX,
+        y: linkY,
+        w: 6.2,
+        h: 0.35,
+        fontSize: 12,
+        underline: true,
+        hyperlink: { url: pdfAbs },
       });
-      // Optional dev warning for missing local files
       const raw = resolvePdfUrlRaw(p).url;
-      if (raw) warnIfMissingLocalSpec(raw);
+      if (raw) {
+        // Don't await here; fire-and-forget to avoid slowing export
+        void warnIfMissingLocalSpec(raw);
+      }
       linkY += 0.4;
     }
 
     if (has((p as any).category)) {
-      sA.addText(`Category: ${(p as any).category}`, { x: rightX, y: 5.9, w: 6.2, h: 0.35, fontSize: 12 });
+      sA.addText(`Category: ${(p as any).category}`, {
+        x: rightX,
+        y: 5.9,
+        w: 6.2,
+        h: 0.35,
+        fontSize: 12,
+      });
     }
 
     // --- Slide B: Specifications (add only if needed) ---
     const specLines = bullets((p as any).specsBullets);
-    const needsSpecSlide = (specLines.length > 0) || !!pdfAbs;
+    const needsSpecSlide = specLines.length > 0 || !!pdfAbs;
 
     if (needsSpecSlide) {
       const sB = pptx.addSlide();
-      sB.addText(`${title((p as any).name)} — Specifications`, { x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 20, bold: true });
+      sB.addText(`${title((p as any).name)} — Specifications`, {
+        x: 0.5,
+        y: 0.5,
+        w: 9,
+        h: 0.6,
+        fontSize: 20,
+        bold: true,
+      });
 
       if (specLines.length > 0) {
-        sB.addText(specLines.map((t) => `• ${t}`).join("\n"), { x: 0.5, y: 1.1, w: 9, h: 4.8, fontSize: 12 });
+        sB.addText(specLines.map((t) => `• ${t}`).join("\n"), {
+          x: 0.5,
+          y: 1.1,
+          w: 9,
+          h: 4.8,
+          fontSize: 12,
+        });
       }
 
       if (pdfAbs) {
         sB.addText("View full specifications (PDF)", {
-          x: 0.5, y: 6.5, w: 7, h: 0.35, fontSize: 14, underline: true, color: "0088CC",
+          x: 0.5,
+          y: 6.5,
+          w: 7,
+          h: 0.35,
+          fontSize: 14,
+          underline: true,
+          color: "0088CC",
           hyperlink: { url: pdfAbs },
         });
       }
@@ -241,8 +331,17 @@ export async function exportPptx({
     try {
       const img = await urlToDataUrl(url);
       const s = pptx.addSlide();
-      s.addImage({ data: img, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
-    } catch {}
+      s.addImage({
+        data: img,
+        x: 0,
+        y: 0,
+        w: FULL_W,
+        h: FULL_H,
+        sizing: { type: "cover", w: FULL_W, h: FULL_H },
+      } as any);
+    } catch {
+      /* ignore */
+    }
   }
 
   const filename = `${title(projectName).replace(/[^\w-]+/g, "_")}.pptx`;
