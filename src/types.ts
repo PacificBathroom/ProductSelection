@@ -1,4 +1,5 @@
 // src/types.ts
+
 export type Contact = {
   name?: string;
   email?: string;
@@ -7,33 +8,24 @@ export type Contact = {
 };
 
 export type Product = {
-  // Selection & core identifiers
   select?: string;          // "Select" column (checkbox/text)
-  url?: string;             // "Url" (product page)
-  code?: string;            // "Code" (SKU or similar)
+  url?: string;             // "Url"
+  code?: string;            // "Code" / SKU
   name?: string;            // "Name"
-
-  // Images
-  imageUrl?: string;        // "ImageURL" raw (from sheet)
-  imageProxied?: string;    // resolved via your /api/file-proxy
-
-  // Marketing copy
+  imageUrl?: string;        // "ImageURL" raw
+  imageProxied?: string;    // via /api/file-proxy
   description?: string;     // "Description"
-  specsBullets?: string[];  // parsed from "SpecsBullets" (pipe- or line-separated in sheet)
-
-  // Specs / PDF linking
-  pdfUrl?: string;          // lowercase variant you already had
-  PdfURL?: string;          // optional: exact header match if your sheet uses "PdfURL"
-  PdfKey?: string;          // optional: new column; maps to /specs/<PdfKey>.pdf
-  PdfFile?: string;         // optional: new column; maps to /specs/<PdfFile>
-  // (If you later use Google Drive IDs you can add: PdfId?: string)
-
-  // Categorisation
+  specsBullets?: string[];  // parsed from "SpecsBullets"
+  pdfUrl?: string;          // "PdfURL" (external link)
   category?: string;        // "Category"
 
-  // Contact details per product (rare, but supported)
-  contact?: Contact;        // Contact* fields
+  // new optional columns for local spec handling
+  PdfFile?: string;         // explicit filename (e.g. VAN600.pdf)
+  PdfKey?: string;          // key used to resolve /specs/<PdfKey>.pdf
 
-  // Keep everything else too (all other headers come through)
+  // contact info, either from sheet or form fallback
+  contact?: Contact;
+
+  // allow extra fields without type errors
   [key: string]: unknown;
 };
