@@ -65,7 +65,7 @@ export default function App() {
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState(""); // <-- NEW
+  const [address, setAddress] = useState("");
   const [date, setDate] = useState("");
 
   // export
@@ -74,15 +74,54 @@ export default function App() {
       alert("Select at least one product.");
       return;
     }
+
+    // helpful logs
+    console.log("[export] projectName:", projectName);
+    console.log("[export] clientName:", clientName);
+    console.log("[export] contact:", { contactName, email, phone, address, date });
+    console.log("[export] selectedList length:", selectedList.length);
+    console.log("[export] first item:", selectedList[0]);
+
     await exportPptx({
       projectName,
       clientName,
       contactName,
       email,
       phone,
-      address, // <-- NEW (this is what fills on the 2nd cover slide)
-      date: date || new Date().toLocaleDateString(), // small safety fallback
+      address,
+      date: date || new Date().toLocaleDateString(),
       items: selectedList,
+    });
+  }
+
+  // debug export to validate exporter independently of sheet data
+  async function onDebugExport() {
+    const fakeItem: any = {
+      name: "Debug Product",
+      code: "SAMPLE",
+      description: "This is a debug product to verify PPT export.",
+      imageUrl: "",
+      imageProxied: "",
+      specsBullets: ["One", "Two", "Three"],
+      PdfKey: "sample", // requires public/specs/sample.pdf in your repo
+      category: "Debug",
+      contact: {
+        name: "Alex Debug",
+        email: "alex@example.com",
+        phone: "0400 000 000",
+        address: "123 Example St",
+      },
+    };
+
+    await exportPptx({
+      projectName: "DEBUG PROJECT",
+      clientName: "DEBUG CLIENT",
+      contactName: "Casey Exporter",
+      email: "casey@example.com",
+      phone: "0400 000 001",
+      address: "Suite 1, 123 Test Rd",
+      date: new Date().toLocaleDateString(),
+      items: [fakeItem],
     });
   }
 
@@ -149,7 +188,7 @@ export default function App() {
           </label>
         </div>
 
-        {/* NEW row for Address */}
+        {/* Address row */}
         <div className="grid2">
           <label>
             <div>Address</div>
@@ -194,6 +233,9 @@ export default function App() {
         <div className="muted">Selected: {selectedList.length}</div>
         <button className="primary" onClick={onExportClick}>
           Export PPTX
+        </button>
+        <button onClick={onDebugExport} title="Exports a sample deck to verify the exporter">
+          Debug Export
         </button>
       </div>
 
