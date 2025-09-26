@@ -128,16 +128,15 @@ export async function exportPptx(input: ExportInput): Promise<void> {
 
   // Resolve cover contact fields with fallback
   const cover = getCoverContactFallback(input);
-  // console.debug("[pptx] Cover contact resolved:", cover);
 
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
   // ------------- COVER 1 (project + client) -------------
+  const s1 = pptx.addSlide();
   try {
     const img1 = await urlToDataUrl(COVER_URLS[0]);
-    const s = pptx.addSlide();
-    s.addImage({
+    s1.addImage({
       data: img1,
       x: 0,
       y: 0,
@@ -145,23 +144,23 @@ export async function exportPptx(input: ExportInput): Promise<void> {
       h: FULL_H,
       sizing: { type: "cover", w: FULL_W, h: FULL_H },
     } as any);
-
-    s.addText(
-      [
-        { text: title(projectName), options: { fontSize: 30, bold: true } },
-        { text: has(clientName) ? `\nClient: ${clientName}` : "", options: { fontSize: 18 } },
-      ],
-      { x: 0.6, y: 4.2, w: 8.8, h: 1.1, color: "000000", align: "left" }
-    );
   } catch {
-    /* ignore cover load errors */
+    console.warn("[cover] Could not load COVER_URLS[0], continuing without background.");
   }
+  // Always add text, even if image failed
+  s1.addText(
+    [
+      { text: title(projectName), options: { fontSize: 30, bold: true, color: "FFFFFF" } },
+      { text: has(clientName) ? `\nClient: ${clientName}` : "", options: { fontSize: 18, color: "FFFFFF" } },
+    ],
+    { x: 0.6, y: 4.2, w: 8.8, h: 1.1, align: "left" }
+  );
 
   // ------------- COVER 2 (rest of the info) -------------
+  const s2 = pptx.addSlide();
   try {
     const img2 = await urlToDataUrl(COVER_URLS[1]);
-    const s = pptx.addSlide();
-    s.addImage({
+    s2.addImage({
       data: img2,
       x: 0,
       y: 0,
@@ -169,33 +168,28 @@ export async function exportPptx(input: ExportInput): Promise<void> {
       h: FULL_H,
       sizing: { type: "cover", w: FULL_W, h: FULL_H },
     } as any);
-
-    const lines = [
-      has(cover.name) ? `Prepared by: ${cover.name}` : "",
-      has(cover.email) ? `Email: ${cover.email}` : "",
-      has(cover.phone) ? `Phone: ${cover.phone}` : "",
-      has(cover.addr) ? `Address: ${cover.addr}` : "",
-      has(date) ? `Date: ${date}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    if (lines) {
-      s.addText({
-        text: lines,
-        options: {
-          x: 0.6,
-          y: 4.2,
-          w: 8.8,
-          h: 1.2,
-          fontSize: 18,
-          color: "000000",
-          align: "left",
-        } as any,
-      });
-    }
   } catch {
-    /* ignore cover load errors */
+    console.warn("[cover] Could not load COVER_URLS[1], continuing without background.");
+  }
+  const lines = [
+    has(cover.name) ? `Prepared by: ${cover.name}` : "",
+    has(cover.email) ? `Email: ${cover.email}` : "",
+    has(cover.phone) ? `Phone: ${cover.phone}` : "",
+    has(cover.addr) ? `Address: ${cover.addr}` : "",
+    has(date) ? `Date: ${date}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (lines) {
+    s2.addText(lines, {
+      x: 0.6,
+      y: 4.2,
+      w: 8.8,
+      h: 1.2,
+      fontSize: 18,
+      color: "FFFFFF",
+      align: "left",
+    } as any);
   }
 
   // ------------- PRODUCT SLIDES -------------
@@ -218,7 +212,7 @@ export async function exportPptx(input: ExportInput): Promise<void> {
         } as any);
       }
     } catch {
-      /* ignore image load errors */
+      console.warn("[pptx] failed to load product image for", (p as any).name);
     }
 
     // Right: name + SKU + description + links
@@ -257,8 +251,9 @@ export async function exportPptx(input: ExportInput): Promise<void> {
       linkY += 0.4;
     }
 
-    const { url: pdfAbs } = resolvePdfUrlAbsolute(p);
+    const { url: pdfAbs, source } = resolvePdfUrlAbsolute(p);
     if (pdfAbs) {
+      console.debug("[pptx] PDF resolved from", source, "→", pdfAbs);
       sA.addText("Spec sheet (PDF)", {
         x: rightX,
         y: linkY,
@@ -269,10 +264,7 @@ export async function exportPptx(input: ExportInput): Promise<void> {
         hyperlink: { url: pdfAbs },
       });
       const raw = resolvePdfUrlRaw(p).url;
-      if (raw) {
-        // Don't await here; fire-and-forget to avoid slowing export
-        void warnIfMissingLocalSpec(raw);
-      }
+      if (raw) void warnIfMissingLocalSpec(raw);
       linkY += 0.4;
     }
 
@@ -328,9 +320,9 @@ export async function exportPptx(input: ExportInput): Promise<void> {
 
   // ------------- BACK PAGES (warranty then service) -------------
   for (const url of BACK_URLS) {
+    const s = pptx.addSlide();
     try {
       const img = await urlToDataUrl(url);
-      const s = pptx.addSlide();
       s.addImage({
         data: img,
         x: 0,
@@ -340,7 +332,7 @@ export async function exportPptx(input: ExportInput): Promise<void> {
         sizing: { type: "cover", w: FULL_W, h: FULL_H },
       } as any);
     } catch {
-      /* ignore */
+      console.warn("[back] Could not load back page:", url);
     }
   }
 
