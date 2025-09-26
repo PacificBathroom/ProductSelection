@@ -65,6 +65,7 @@ export default function App() {
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState(""); // <-- NEW
   const [date, setDate] = useState("");
 
   // export
@@ -79,7 +80,8 @@ export default function App() {
       contactName,
       email,
       phone,
-      date,
+      address, // <-- NEW (this is what fills on the 2nd cover slide)
+      date: date || new Date().toLocaleDateString(), // small safety fallback
       items: selectedList,
     });
   }
@@ -108,6 +110,7 @@ export default function App() {
             />
           </label>
         </div>
+
         <div className="grid2">
           <label>
             <div>Your name (contact)</div>
@@ -126,6 +129,7 @@ export default function App() {
             />
           </label>
         </div>
+
         <div className="grid2">
           <label>
             <div>Email</div>
@@ -143,6 +147,19 @@ export default function App() {
               placeholder="0000 000 000"
             />
           </label>
+        </div>
+
+        {/* NEW row for Address */}
+        <div className="grid2">
+          <label>
+            <div>Address</div>
+            <input
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder="Suite 1, 123 Example St, Brisbane QLD"
+            />
+          </label>
+          <div /> {/* spacer to keep grid balanced */}
         </div>
       </div>
 
