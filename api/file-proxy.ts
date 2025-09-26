@@ -1,42 +1,32 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+// /api/file-proxy.ts (Vercel)
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-function setCors(res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-}
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  setCors(res);
-
-  // Preflight for CORS
-  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method === "OPTIONS") return res.status(204).setHeader("Access-Control-Allow-Origin", "*").end();
 
   try {
-    const url = String(req.query.url || '');
-    if (!url) return res.status(400).json({ error: 'Missing url' });
+    const url = String(req.query.url || "");
+    if (!url) return res.status(400).setHeader("Access-Control-Allow-Origin", "*").json({ error: "Missing url" });
 
-    const upstream = await fetch(url, {
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': '*/*'
-      }
-    });
-
+    const upstream = await fetch(url, { redirect: "follow" });
     if (!upstream.ok) {
-      return res
-        .status(upstream.status)
+      return res.status(upstream.status).setHeader("Access-Control-Allow-Origin", "*")
         .json({ error: `Upstream ${upstream.status} ${upstream.statusText}` });
     }
 
-    const ct = upstream.headers.get('content-type') ?? 'application/octet-stream';
+    const contentType = upstream.headers.get("content-type") || "application/octet-stream";
     const buf = Buffer.from(await upstream.arrayBuffer());
-
-    res.setHeader('Content-Type', ct);
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // cache 1 day
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Content-Type", contentType);
+    // Return binary as-is; client can read it as blob
     return res.status(200).send(buf);
   } catch (e: any) {
-    return res.status(500).json({ error: e?.message || 'proxy error' });
+    return res.status(500).setHeader("Access-Control-Allow-Origin", "*").json({ error: String(e?.message || e) });
   }
 }
