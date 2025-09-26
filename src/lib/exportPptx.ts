@@ -142,8 +142,10 @@ export async function exportPptx(input: ExportInput) {
 
     // Left: product image (contained in a box)
     try {
-      if ((p as any).imageProxied) {
-        const dataUrl = await urlToDataUrl((p as any).imageProxied);
+      // small hardening: fall back to direct URL if proxy is missing
+      const imgSrc = (p as any).imageProxied || (p as any).imageUrl;
+      if (imgSrc) {
+        const dataUrl = await urlToDataUrl(imgSrc);
         sA.addImage({
           data: dataUrl,
           x: 0.5, y: 0.7, w: 5.6, h: 4.2,
@@ -206,7 +208,7 @@ export async function exportPptx(input: ExportInput) {
         sB.addText(specLines.map((t) => `• ${t}`).join("\n"), {
           x: 0.5, y, w: 9, h: 4.8, fontSize: 12,
         });
-        y += Math.min(4.8, 0); // keep y if you want to stack more content later
+        // y reserved for stacking future content if needed
       }
 
       if (pdfResolved) {
