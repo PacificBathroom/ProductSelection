@@ -110,10 +110,17 @@ function getCoverContactFallback(input: ExportInput) {
   };
 }
 
-export async function exportPptx(input: ExportInput) {
-  const {
-    projectName, clientName, date, items,
-  } = input;
+export async function exportPptx({
+  projectName, 
+  clientName, 
+  contactName, 
+  email, 
+  phone, 
+  address, 
+  date, 
+  items
+}: ExportInput) { ... }
+
 
   // Resolve cover contact fields with fallback
   const cover = getCoverContactFallback(input);
