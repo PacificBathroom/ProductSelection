@@ -14,13 +14,13 @@ function clean(s?: string | null): string { return (s ?? "").trim(); }
 function title(s?: string) { return clean(s) || "—"; }
 function bullets(arr?: string[] | null): string[] {
   if (!arr || !arr.length) return [];
-  // Keep non-empty lines, trim, and dedupe consecutive empties
-  return arr
-    .map((x) => clean(x))
-    .filter((x) => !!x);
+  return arr.map((x) => clean(x)).filter((x) => !!x);
 }
 
-// Turn a Blob into data URL so we can embed images in the PPT
+function has(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
 function blobToDataUrl(b: Blob): Promise<string> {
   return new Promise((res) => {
     const r = new FileReader();
@@ -33,6 +33,45 @@ async function urlToDataUrl(url: string): Promise<string> {
   const r = await fetch(url, { cache: "no-store" });
   const b = await r.blob();
   return blobToDataUrl(b);
+}
+
+/**
+ * Resolve a spec PDF URL for a product using (in order):
+ *   1) PdfFile  -> /specs/<PdfFile>
+ *   2) PdfKey   -> /specs/<PdfKey>.pdf
+ *   3) Code     -> /specs/<Code>.pdf
+ *   4) pdfUrl   -> use as-is (external)  [least preferred]
+ *
+ * Put PDFs in /public/specs so they deploy to /specs/...
+ */
+function resolvePdfUrl(p: Product): string | undefined {
+  const anyp = p as any;
+
+  // 1) explicit file name (e.g. VAN600.pdf)
+  if (has(anyp.PdfFile)) return `/specs/${anyp.PdfFile.trim()}`;
+
+  // 2) PdfKey + .pdf (e.g. VAN600 -> /specs/VAN600.pdf)
+  if (has(anyp.PdfKey)) return `/specs/${anyp.PdfKey.trim()}.pdf`;
+
+  // 3) fall back to Code (SKU)
+  if (has(p.code)) return `/specs/${p.code.trim()}.pdf`;
+
+  // 4) last resort: use existing external url on the product object
+  if (has((p as any).PdfURL)) return String((p as any).PdfURL).trim();
+  if (has(p.pdfUrl)) return p.pdfUrl.trim();
+
+  return undefined;
+}
+
+/** Optional: warn in dev if a local /specs file looks missing */
+async function warnIfMissingLocalSpec(url: string) {
+  if (!url.startsWith("/specs/")) return;
+  try {
+    const r = await fetch(url, { method: "HEAD", cache: "no-store" });
+    if (!r.ok) console.warn(`[specs] Missing PDF at ${url}`);
+  } catch {
+    console.warn(`[specs] Could not verify PDF at ${url}`);
+  }
 }
 
 type ExportInput = {
@@ -98,14 +137,14 @@ export async function exportPptx(input: ExportInput) {
 
   // ------------- PRODUCT SLIDES -------------
   for (const p of items) {
-    const s = pptx.addSlide();
+    // --- Slide A: Main product card ---
+    const sA = pptx.addSlide();
 
     // Left: product image (contained in a box)
     try {
-      if (p.imageProxied) {
-        const dataUrl = await urlToDataUrl(p.imageProxied);
-        // Keep aspect with "contain" inside this box
-        s.addImage({
+      if ((p as any).imageProxied) {
+        const dataUrl = await urlToDataUrl((p as any).imageProxied);
+        sA.addImage({
           data: dataUrl,
           x: 0.5, y: 0.7, w: 5.6, h: 4.2,
           sizing: { type: "contain", w: 5.6, h: 4.2 }
@@ -113,45 +152,69 @@ export async function exportPptx(input: ExportInput) {
       }
     } catch {}
 
-    // Right: name + SKU + description + specs
+    // Right: name + SKU + description + links
     const rightX = 6.2;
-    s.addText(title(p.name), { x: rightX, y: 0.7, w: 6.2, h: 0.6, fontSize: 22, bold: true });
-    if (clean(p.code)) {
-      s.addText(`SKU: ${p.code}`, { x: rightX, y: 1.3, w: 6.2, h: 0.35, fontSize: 12 });
+    sA.addText(title((p as any).name), { x: rightX, y: 0.7, w: 6.2, h: 0.6, fontSize: 22, bold: true });
+
+    if (has(p.code)) {
+      sA.addText(`SKU: ${p.code}`, { x: rightX, y: 1.3, w: 6.2, h: 0.35, fontSize: 12 });
     }
 
-    // description
-    const desc = clean(p.description);
+    const desc = clean((p as any).description);
     if (desc) {
-      s.addText(desc, { x: rightX, y: 1.7, w: 6.2, h: 1.0, fontSize: 12 });
+      sA.addText(desc, { x: rightX, y: 1.7, w: 6.2, h: 1.0, fontSize: 12 });
     }
 
-    // specs (as bullets)
-    const specLines = bullets(p.specsBullets);
-    if (specLines.length) {
-      s.addText(specLines.map((t) => `• ${t}`).join("\n"), {
-        x: rightX, y: 2.8, w: 6.2, h: 2.1, fontSize: 12
-      });
-    }
-
-    // links
-    let linkY = 5.1;
-    if (p.url) {
-      s.addText("Product page", {
+    // Links on main slide (product page + spec link if desired)
+    let linkY = 3.0; // moved up since we no longer show specs here
+    if (has((p as any).url)) {
+      sA.addText("Product page", {
         x: rightX, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: p.url }
+        hyperlink: { url: (p as any).url }
       });
       linkY += 0.4;
     }
-    if (p.pdfUrl) {
-      s.addText("Spec sheet (PDF)", {
+
+    const pdfResolved = resolvePdfUrl(p);
+    if (pdfResolved) {
+      sA.addText("Spec sheet (PDF)", {
         x: rightX, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: p.pdfUrl }
+        hyperlink: { url: pdfResolved }
       });
+      // Optional dev warning for missing local files
+      warnIfMissingLocalSpec(pdfResolved);
+      linkY += 0.4;
     }
 
-    if (clean(p.category)) {
-      s.addText(`Category: ${p.category}`, { x: rightX, y: 5.9, w: 6.2, h: 0.35, fontSize: 12 });
+    if (has((p as any).category)) {
+      sA.addText(`Category: ${(p as any).category}`, { x: rightX, y: 5.9, w: 6.2, h: 0.35, fontSize: 12 });
+    }
+
+    // --- Slide B: Specifications (add only if needed) ---
+    const specLines = bullets((p as any).specsBullets);
+    const needsSpecSlide = (specLines.length > 0) || !!pdfResolved;
+
+    if (needsSpecSlide) {
+      const sB = pptx.addSlide();
+      sB.addText(`${title((p as any).name)} — Specifications`, {
+        x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 20, bold: true,
+      });
+
+      let y = 1.1;
+
+      if (specLines.length > 0) {
+        sB.addText(specLines.map((t) => `• ${t}`).join("\n"), {
+          x: 0.5, y, w: 9, h: 4.8, fontSize: 12,
+        });
+        y += Math.min(4.8, 0); // keep y if you want to stack more content later
+      }
+
+      if (pdfResolved) {
+        sB.addText("View full specifications (PDF)", {
+          x: 0.5, y: 6.5, w: 7, h: 0.35, fontSize: 14, underline: true, color: "0088CC",
+          hyperlink: { url: pdfResolved },
+        });
+      }
     }
   }
 
@@ -164,6 +227,6 @@ export async function exportPptx(input: ExportInput) {
     } catch {}
   }
 
-  const filename = `${(title(projectName)).replace(/[^\w-]+/g, "_")}.pptx`;
+  const filename = `${title(projectName).replace(/[^\w-]+/g, "_")}.pptx`;
   await pptx.writeFile({ fileName: filename });
 }
