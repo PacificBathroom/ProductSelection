@@ -35,6 +35,21 @@ async function urlToDataUrl(url: string): Promise<string> {
   return blobToDataUrl(b);
 }
 
+/** Convert a local path (/specs/xyz.pdf) to an absolute URL for PPT hyperlinks */
+function absoluteUrl(u?: string): string | undefined {
+  if (!u) return undefined;
+  try {
+    if (u.startsWith("/")) {
+      // window.location.origin is available in the browser at export time
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      return origin ? new URL(u, origin).href : u; // fallback to raw if origin unknown
+    }
+    return u;
+  } catch {
+    return u;
+  }
+}
+
 /**
  * Resolve a spec PDF URL for a product using (in order):
  *   1) PdfFile  -> /specs/<PdfFile>
@@ -44,33 +59,27 @@ async function urlToDataUrl(url: string): Promise<string> {
  *
  * Put PDFs in /public/specs so they deploy to /specs/...
  */
-function resolvePdfUrl(p: Product): string | undefined {
+function resolvePdfUrl(p: Product): { url?: string; source?: "PdfFile"|"PdfKey"|"Code"|"PdfURL"|"pdfUrl" } {
   const anyp = p as any;
 
-  // 1) explicit file name (e.g. VAN600.pdf)
-  if (has(anyp.PdfFile)) return `/specs/${anyp.PdfFile.trim()}`;
+  if (has(anyp.PdfFile)) return { url: `/specs/${anyp.PdfFile.trim()}`, source: "PdfFile" };
+  if (has(anyp.PdfKey))  return { url: `/specs/${anyp.PdfKey.trim()}.pdf`, source: "PdfKey" };
+  if (has(p.code))       return { url: `/specs/${p.code.trim()}.pdf`, source: "Code" };
+  if (has(anyp.PdfURL))  return { url: String(anyp.PdfURL).trim(), source: "PdfURL" };
+  if (has(p.pdfUrl))     return { url: p.pdfUrl.trim(), source: "pdfUrl" };
 
-  // 2) PdfKey + .pdf (e.g. VAN600 -> /specs/VAN600.pdf)
-  if (has(anyp.PdfKey)) return `/specs/${anyp.PdfKey.trim()}.pdf`;
-
-  // 3) fall back to Code (SKU)
-  if (has(p.code)) return `/specs/${p.code.trim()}.pdf`;
-
-  // 4) last resort: use existing external url on the product object
-  if (has((p as any).PdfURL)) return String((p as any).PdfURL).trim();
-  if (has(p.pdfUrl)) return p.pdfUrl.trim();
-
-  return undefined;
+  return { url: undefined, source: undefined };
 }
 
-/** Optional: warn in dev if a local /specs file looks missing */
+/** Optional: warn in dev if a local /specs file looks missing (uses absolute URL) */
 async function warnIfMissingLocalSpec(url: string) {
-  if (!url.startsWith("/specs/")) return;
+  if (!url.includes("/specs/")) return;
+  const abs = absoluteUrl(url) || url;
   try {
-    const r = await fetch(url, { method: "HEAD", cache: "no-store" });
-    if (!r.ok) console.warn(`[specs] Missing PDF at ${url}`);
+    const r = await fetch(abs, { method: "HEAD", cache: "no-store" });
+    if (!r.ok) console.warn(`[specs] Missing PDF at ${abs}`);
   } catch {
-    console.warn(`[specs] Could not verify PDF at ${url}`);
+    console.warn(`[specs] Could not verify PDF at ${abs}`);
   }
 }
 
@@ -98,8 +107,6 @@ export async function exportPptx(input: ExportInput) {
     const img1 = await urlToDataUrl(COVER_URLS[0]);
     const s = pptx.addSlide();
     s.addImage({ data: img1, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
-
-    // Overlay (bottom-left)
     s.addText(
       [
         { text: title(projectName), options: { fontSize: 30, bold: true } },
@@ -107,9 +114,7 @@ export async function exportPptx(input: ExportInput) {
       ],
       { x: 0.6, y: 4.2, w: 8.8, h: 1.1, color: "000000", align: "left" }
     );
-  } catch {
-    // ignore cover load errors
-  }
+  } catch {}
 
   // ------------- COVER 2 (rest of the info) -------------
   try {
@@ -117,7 +122,6 @@ export async function exportPptx(input: ExportInput) {
     const s = pptx.addSlide();
     s.addImage({ data: img2, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
 
-    // Overlay (bottom-left)
     const lines = [
       clean(contactName) ? `Prepared by: ${contactName}` : "",
       clean(email) ? `Email: ${email}` : "",
@@ -131,9 +135,7 @@ export async function exportPptx(input: ExportInput) {
         fontSize: 18, color: "000000", align: "left",
       });
     }
-  } catch {
-    // ignore cover load errors
-  }
+  } catch {}
 
   // ------------- PRODUCT SLIDES -------------
   for (const p of items) {
@@ -142,7 +144,6 @@ export async function exportPptx(input: ExportInput) {
 
     // Left: product image (contained in a box)
     try {
-      // small hardening: fall back to direct URL if proxy is missing
       const imgSrc = (p as any).imageProxied || (p as any).imageUrl;
       if (imgSrc) {
         const dataUrl = await urlToDataUrl(imgSrc);
@@ -168,23 +169,26 @@ export async function exportPptx(input: ExportInput) {
     }
 
     // Links on main slide (product page + spec link if desired)
-    let linkY = 3.0; // moved up since we no longer show specs here
+    let linkY = 3.0;
     if (has((p as any).url)) {
       sA.addText("Product page", {
         x: rightX, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: (p as any).url }
+        hyperlink: { url: absoluteUrl((p as any).url)! }
       });
       linkY += 0.4;
     }
 
-    const pdfResolved = resolvePdfUrl(p);
-    if (pdfResolved) {
+    const { url: pdfLocalOrExternal, source } = resolvePdfUrl(p);
+    const pdfResolvedAbs = absoluteUrl(pdfLocalOrExternal);
+
+    if (pdfResolvedAbs) {
+      console.debug("[pptx] PDF resolved from", source, "→", pdfResolvedAbs);
       sA.addText("Spec sheet (PDF)", {
         x: rightX, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
-        hyperlink: { url: pdfResolved }
+        hyperlink: { url: pdfResolvedAbs }
       });
       // Optional dev warning for missing local files
-      warnIfMissingLocalSpec(pdfResolved);
+      warnIfMissingLocalSpec(pdfLocalOrExternal!);
       linkY += 0.4;
     }
 
@@ -194,7 +198,7 @@ export async function exportPptx(input: ExportInput) {
 
     // --- Slide B: Specifications (add only if needed) ---
     const specLines = bullets((p as any).specsBullets);
-    const needsSpecSlide = (specLines.length > 0) || !!pdfResolved;
+    const needsSpecSlide = (specLines.length > 0) || !!pdfResolvedAbs;
 
     if (needsSpecSlide) {
       const sB = pptx.addSlide();
@@ -202,19 +206,16 @@ export async function exportPptx(input: ExportInput) {
         x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 20, bold: true,
       });
 
-      let y = 1.1;
-
       if (specLines.length > 0) {
         sB.addText(specLines.map((t) => `• ${t}`).join("\n"), {
-          x: 0.5, y, w: 9, h: 4.8, fontSize: 12,
+          x: 0.5, y: 1.1, w: 9, h: 4.8, fontSize: 12,
         });
-        // y reserved for stacking future content if needed
       }
 
-      if (pdfResolved) {
+      if (pdfResolvedAbs) {
         sB.addText("View full specifications (PDF)", {
           x: 0.5, y: 6.5, w: 7, h: 0.35, fontSize: 14, underline: true, color: "0088CC",
-          hyperlink: { url: pdfResolved },
+          hyperlink: { url: pdfResolvedAbs },
         });
       }
     }
