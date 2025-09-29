@@ -1,11 +1,11 @@
 // src/lib/specs.ts
 import type { Product } from "../types";
 
-/**
- * Put curated bullets here, keyed by PdfKey or Code.
- * Keep the values short, “bullet-sized” strings.
- * Example keys: "BSB-480", "KOR900", "ATBMC"
- */
+// Add any items that don't have SpecsBullets in the sheet
+const MAP: Record<string, string[]> = {
+  // by SKU/code
+  // "PSC-1800": ["Finger-pull doors", "Moisture-resistant finish", "Soft-close runners"],
+};
 const SPEC_BULLETS: Record<string, string[]> = {
   // --- examples ---
   "BSB-480": [
@@ -23,7 +23,11 @@ const SPEC_BULLETS: Record<string, string[]> = {
   ],
   // Add more here…
 };
-
+export function bulletsFor(p: Product): string[] {
+  if (!p) return [];
+  // try by code, then by name (normalized)
+  const byCode = (p.code || "").trim();
+  if (byCode && MAP[byCode]) return MAP[byCode];
 /** Normalise keys like "Bsb-480" / " bsb_480 " -> "BSB-480" */
 function normKey(s?: string | null): string {
   return (s || "")
@@ -32,9 +36,13 @@ function normKey(s?: string | null): string {
     .trim();
 }
 
-/** Return bullets from the repo map (by PdfKey or Code) */
-export function bulletsFromRepo(p: Product): string[] {
-  const byPdfKey = SPEC_BULLETS[normKey((p as any).pdfKey)];
-  const byCode   = SPEC_BULLETS[normKey(p.code)];
-  return byPdfKey || byCode ? (byPdfKey || byCode)! : [];
+export function bulletsFor(p: Product): string[] {
+  if (!p) return [];
+  // try by code, then by name (normalized)
+  const byCode = (p.code || "").trim();
+  if (byCode && MAP[byCode]) return MAP[byCode];
+
+  const key = (p.name || "").trim().toLowerCase();
+  const found = Object.entries(MAP).find(([k]) => k.toLowerCase() === key);
+  return found ? found[1] : [];
 }
