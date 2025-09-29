@@ -29,9 +29,24 @@ const proxiedPdf = (url?: string | null) =>
   url ? (url.startsWith("/specs/") ? url
        : `/api/pdf-proxy?url=${encodeURIComponent(url)}`) : undefined;
 
+// Robustly read either an array or { rows: [...] }
 export async function fetchProducts(range: string): Promise<Product[]> {
   const res = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`);
-  if (!res.ok) throw new Error(`Sheets fetch failed (${res.status})`);
+  if (!res.ok) throw new Error(`sheets ${res.status}`);
+
+  const data = await res.json();
+  const rows: Record<string, any>[] = Array.isArray(data)
+    ? data
+    : Array.isArray((data as any)?.rows)
+    ? (data as any).rows
+    : [];
+
+  // Optional: if nothing came back, give a friendlier error instead of “.map is not a function”
+  if (!Array.isArray(rows)) {
+    throw new Error("Sheets API did not return a list of rows");
+  }
+
+  return rows.map(normalizeRow).filter(p => p.name || p.code);
 
   const payload: any = await res.json();
 
