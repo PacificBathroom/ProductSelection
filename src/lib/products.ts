@@ -18,15 +18,29 @@ function nameFromUrl(u: string): string {
   }
 }
 
-/** parse SpecsBullets from string (pipes/newlines/bullets) or array */
-function parseBullets(raw?: unknown): string[] {
+/** parse SpecsBullets from string (pipes/newlines/•/hyphen bullets) or array */
+function parseBullets(raw?: string | string[]): string[] {
   if (!raw) return [];
-  const s = Array.isArray(raw) ? raw.join("|") : String(raw);
-  return s
-    .split(/\r?\n|[|]/g)
-    .map((x) => x.replace(/^[•\-\u2022\s]+/, "").trim())
+  const s = Array.isArray(raw) ? raw.join("\n") : String(raw);
+
+  // Turn common inline bullet markers into newlines first
+  const normalized = s
+    // “• spec … • next …”
+    .replace(/[\u2022•]\s*/g, "\n")
+    // leading hyphen bullets like "- spec" or "– spec" or "— spec"
+    .replace(/(?:^|\s)[\-–—]\s+/g, "\n")
+    // collapse multiple newlines
+    .replace(/\r/g, "")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+
+  return normalized
+    .split(/\n|[|;]+/g)                         // newline, pipe, or semicolon
+    .map(x => x.replace(/^[\u2022•\-–—\s]+/, "")) // trim any leading bullet chars
+    .map(x => x.trim())
     .filter(Boolean);
 }
+
 
 const proxied = (url?: string | null) =>
   url
