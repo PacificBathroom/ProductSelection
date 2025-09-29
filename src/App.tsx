@@ -170,4 +170,76 @@ export default function App() {
         </select>
         <select
           className="sort"
-          value={sort
+          value={sort}
+          onChange={(e) => setSort(e.target.value as "sheet" | "name")}
+        >
+          <option value="sheet">Sheet order</option>
+          <option value="name">Name (A–Z)</option>
+        </select>
+
+        <div className="spacer" />
+        <div className="muted">Selected: {selectedList.length}</div>
+        <button className="primary" onClick={onExportClick}>
+          Export PPTX
+        </button>
+      </div>
+
+      {/* status */}
+      {err && <p className="error">Error: {err}</p>}
+      {!items && !err && <p>Loading…</p>}
+
+      {/* grid */}
+      <div className="grid">
+        {(visible ?? []).map((p: Product, i: number) => {
+          const k = keyOf(p);
+          const isSel = !!selected[k];
+          const imgSrc = p.imageProxied || (p as any).imageUrl;
+          return (
+            <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
+              <label className="checkbox">
+                <input type="checkbox" checked={isSel} onChange={() => toggle(p)} />
+              </label>
+
+              <div className="thumb">
+                {imgSrc ? (
+                  <img src={imgSrc} alt={p.name || p.code || "product"} />
+                ) : (
+                  <div className="ph">No image</div>
+                )}
+              </div>
+
+              <div className="body">
+                <div className="name">{title(p.name)}</div>
+                {p.code && <div className="sku">SKU: {p.code}</div>}
+                {p.description && <p className="desc">{p.description}</p>}
+
+                {p.specsBullets && p.specsBullets.length > 0 && (
+                  <ul className="specs">
+                    {p.specsBullets.slice(0, 4).map((s, j) => (
+                      <li key={j}>{s}</li>
+                    ))}
+                  </ul>
+                )}
+
+                <div className="links">
+                  {p.url && (
+                    <a href={p.url} target="_blank" rel="noreferrer">
+                      Product page
+                    </a>
+                  )}
+                  {p.pdfUrl && (
+                    <a href={p.pdfUrl} target="_blank" rel="noreferrer">
+                      Spec sheet (PDF)
+                    </a>
+                  )}
+                </div>
+
+                {p.category && <div className="category">Category: {p.category}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
