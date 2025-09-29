@@ -4,7 +4,7 @@ import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
 import { exportPptx } from "./lib/exportPptx";
 
-// tiny helpers
+// helpers
 const includes = (h: string, n: string) => h.toLowerCase().includes(n.toLowerCase());
 const title = (s?: string) => (s ?? "").trim() || "—";
 
@@ -12,6 +12,7 @@ export default function App() {
   // load products
   const [items, setItems] = useState<Product[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
       try {
@@ -68,20 +69,23 @@ export default function App() {
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState("");
 
-  // export
- async function onExportClick() {
-  // if nothing is selected, export everything currently visible
-  const list = selectedList.length ? selectedList : visible;
-  if (!list.length) {
-    alert("No products to export.");
-    return;
+  // export (fallback to all visible if nothing selected)
+  async function onExportClick() {
+    const list = selectedList.length ? selectedList : visible;
+    if (!list.length) {
+      alert("No products to export.");
+      return;
+    }
+    await exportPptx({
+      projectName,
+      clientName,
+      contactName,
+      email,
+      phone,
+      date,
+      items: list,
+    });
   }
-  await exportPptx({
-    projectName, clientName, contactName, email, phone, date,
-    items: list,
-  });
-}
-
 
   return (
     <div className="wrap">
@@ -187,59 +191,4 @@ export default function App() {
       {/* grid */}
       <div className="grid">
         {(visible ?? []).map((p: Product, i: number) => {
-          const k = keyOf(p);
-          const isSel = !!selected[k];
-          return (
-            <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
-              <label className="checkbox">
-                <input type="checkbox" checked={isSel} onChange={() => toggle(p)} />
-              </label>
-
-              <div className="thumb">
-  {p.imageProxied || p.imageUrl ? (
-    <img src={p.imageProxied || p.imageUrl!} alt={p.name || p.code || "product"} />
-  ) : (
-    <div className="ph">No image</div>
-  )}
-</div>
-
-
-              <div className="body">
-                <div className="name">{title(p.name)}</div>
-                {p.code && <div className="sku">SKU: {p.code}</div>}
-                {p.description && <p className="desc">{p.description}</p>}
-
-                {p.specsBullets && p.specsBullets.length > 0 && (
-                  <ul className="specs">
-                    {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
-                      <li key={j}>{s}</li>
-                    ))}
-                  </ul>
-                )}
-
-                <div className="links">
-                  {p.url && (
-                    <a href={p.url} target="_blank" rel="noreferrer">
-                      Product page
-                    </a>
-                  )}
-                  {p.pdfUrl && (
-                    <a
-                      href={`/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Spec sheet (PDF)
-                    </a>
-                  )}
-                </div>
-
-                {p.category && <div className="category">Category: {p.category}</div>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+         
