@@ -1,16 +1,25 @@
-// src/lib/exportPptx.ts
 import type { Product } from "../types";
+import { bulletsFor } from "./specs"; // optional fallback map you can edit
 
-const FULL_W = 10;          // 16:9 width (in)
-const FULL_H = 5.625;       // 16:9 height (in)
+const FULL_W = 10;
+const FULL_H = 5.625;
 
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/* ---------------------- helpers ---------------------- */
+// Layout boxes (inches)
+const RECT = {
+  img:   { x: 0.5, y: 0.7, w: 5.5, h: 4.1 },
+  title: { x: 6.2, y: 0.7, w: 6.2, h: 0.6 },
+  sku:   { x: 6.2, y: 1.2, w: 6.2, h: 0.35 },
+  desc:  { x: 6.2, y: 1.6, w: 6.2, h: 1.6 },   // description box
+  specs: { x: 6.2, y: 3.3, w: 6.2, h: 1.9 },   // bullets box (separate area)
+  link1: { x: 6.2, y: 5.4, w: 6.2, h: 0.35 },
+  link2: { x: 6.2, y: 5.8, w: 6.2, h: 0.35 },
+};
 
 async function urlToDataUrl(url: string): Promise<string> {
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${url}`);
   const blob = await res.blob();
   return await new Promise<string>((resolve) => {
@@ -20,79 +29,11 @@ async function urlToDataUrl(url: string): Promise<string> {
   });
 }
 
-// naive word-wrapping + clamping with ellipsis
-function wrapAndClamp(text = "", maxLines: number, maxCharsPerLine: number): string {
-  const words = String(text).replace(/\s+/g, " ").trim().split(" ");
-  const lines: string[] = [];
-  let cur = "";
-  for (const w of words) {
-    if ((cur + " " + w).trim().length <= maxCharsPerLine) {
-      cur = (cur ? cur + " " : "") + w;
-    } else {
-      lines.push(cur);
-      cur = w;
-      if (lines.length === maxLines) break;
-    }
-  }
-  if (lines.length < maxLines && cur) lines.push(cur);
-  if (lines.length > maxLines) lines.length = maxLines;
-  // ellipsis if we dropped words
-  const used = lines.join(" ").length;
-  const total = words.join(" ").length;
-  if (total > used) {
-    const last = lines[lines.length - 1] || "";
-    lines[lines.length - 1] = last.length > 1 ? last.replace(/.{0,3}$/, "…") : "…";
-  }
-  return lines.join("\n");
+// very simple truncation as a final safety net
+function truncate(s: string, maxChars = 700): string {
+  const t = (s || "").replace(/\s+/g, " ").trim();
+  return t.length <= maxChars ? t : t.slice(0, maxChars - 1).trimEnd() + "…";
 }
-
-function clampBullets(bullets: string[], maxBullets: number, maxCharsEach: number): string[] {
-  return (bullets || [])
-    .filter(Boolean)
-    .map(b => b.replace(/^[•\-\u2022\s]+/, "").trim())
-    .filter(Boolean)
-    .slice(0, maxBullets)
-    .map(b => (b.length > maxCharsEach ? b.slice(0, maxCharsEach - 1) + "…" : b));
-}
-
-// Try to pull bullets from (1) sheet, (2) src/lib/specs.ts, (3) a sibling .txt next to /public/specs/XYZ.pdf
-async function resolveBullets(p: Product): Promise<string[]> {
-  // (1) direct from sheet
-  if (p.specsBullets && p.specsBullets.length) return p.specsBullets;
-
-  // (2) mapping in repo
-  try {
-    const mod: any = await import("./specs");
-    if (typeof mod.bulletsFor === "function") {
-      const fromMap = mod.bulletsFor(p);
-      if (Array.isArray(fromMap) && fromMap.length) return fromMap;
-    }
-  } catch { /* mapping not present – ok */ }
-
-  // (3) /public/specs/NAME.txt (one bullet per line)
-  //     If p.pdfUrl looks like /specs/NAME.pdf, try NAME.txt and NAME.json
-  const local = (p.pdfUrl || "").startsWith("/specs/") ? p.pdfUrl : "";
-  if (local && /\.pdf$/i.test(local)) {
-    const base = local.replace(/\.pdf$/i, "");
-    for (const ext of [".txt", ".json"]) {
-      try {
-        const r = await fetch(`${base}${ext}`, { cache: "no-store" });
-        if (!r.ok) continue;
-        if (ext === ".txt") {
-          const t = (await r.text()).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-          if (t.length) return t;
-        } else {
-          const j = await r.json();
-          const arr = Array.isArray(j) ? j : Array.isArray(j?.bullets) ? j.bullets : [];
-          if (arr.length) return arr as string[];
-        }
-      } catch { /* try next */ }
-    }
-  }
-  return [];
-}
-
-/* ---------------------- main ---------------------- */
 
 type ExportArgs = {
   projectName?: string;
@@ -116,14 +57,16 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  /* ---------- COVERS ---------- */
-
-  // Slide 1: project + client over photo
+  // ---------- COVERS ----------
+  // Slide 1: project + client on photo
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
-      const data = await urlToDataUrl(COVER_URLS[0]);
-      s1.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+      s1.addImage({
+        data: await urlToDataUrl(COVER_URLS[0]),
+        x: 0, y: 0, w: FULL_W, h: FULL_H,
+        sizing: { type: "cover", w: FULL_W, h: FULL_H },
+      } as any);
 
       s1.addText(projectName, {
         x: 0.6, y: 0.6, w: 8.8, h: 1.0,
@@ -140,18 +83,22 @@ export async function exportPptx({
     } catch {}
   }
 
-  // Slide 2: remaining details over photo
+  // Slide 2: rest of contact info on photo
   if (COVER_URLS[1]) {
     try {
       const s2 = pptx.addSlide();
-      const data = await urlToDataUrl(COVER_URLS[1]);
-      s2.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+      s2.addImage({
+        data: await urlToDataUrl(COVER_URLS[1]),
+        x: 0, y: 0, w: FULL_W, h: FULL_H,
+        sizing: { type: "cover", w: FULL_W, h: FULL_H },
+      } as any);
 
-      const lines: string[] = [];
-      if (contactName) lines.push(`Prepared by: ${contactName}`);
-      if (email)       lines.push(`Email: ${email}`);
-      if (phone)       lines.push(`Phone: ${phone}`);
-      if (date)        lines.push(`Date: ${date}`);
+      const lines = [
+        contactName ? `Prepared by: ${contactName}` : "",
+        email       ? `Email: ${email}`             : "",
+        phone       ? `Phone: ${phone}`             : "",
+        date        ? `Date: ${date}`               : "",
+      ].filter(Boolean);
 
       s2.addText(lines.join("\n"), {
         x: 0.6, y: 0.6, w: 8.8, h: 2.0,
@@ -161,80 +108,73 @@ export async function exportPptx({
     } catch {}
   }
 
-  /* ---------- PRODUCT SLIDES ---------- */
-
+  // ---------- PRODUCT SLIDES ----------
   for (const p of items) {
     const s = pptx.addSlide();
 
-    // Image (no crop / no stretch)
+    // Left image — keep aspect ratio, no cropping
     if (p.imageProxied) {
       try {
-        const data = await urlToDataUrl(p.imageProxied);
         s.addImage({
-          data, x: 0.5, y: 0.7, w: 5.5, h: 4.1,
-          sizing: { type: "contain", w: 5.5, h: 4.1 },
+          data: await urlToDataUrl(p.imageProxied),
+          ...RECT.img,
+          sizing: { type: "contain", w: RECT.img.w, h: RECT.img.h },
         } as any);
       } catch {}
     }
 
     // Title + SKU
-    s.addText(p.name || "—", { x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true });
-    if (p.code)
-      s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.3, w: 6.2, h: 0.35, fontSize: 12, color: "555555" });
+    s.addText(p.name || "—", { ...RECT.title, fontSize: 20, bold: true });
+    if (p.code) s.addText(`SKU: ${p.code}`, { ...RECT.sku, fontSize: 12 });
 
-    // Description (wrapped & clamped)
-    const desc = wrapAndClamp(p.description || "", /*maxLines*/ 6, /*maxCharsPerLine*/ 74);
-    if (desc) {
-      s.addText(desc, {
-        x: 6.2, y: 1.7, w: 6.2, h: 1.6,
-        fontSize: 12, valign: "top",
+    // Description (own box, auto-fit & truncate to avoid overflow)
+    if (p.description) {
+      s.addText(truncate(p.description), {
+        ...RECT.desc,
+        fontSize: 12,
+        valign: "top",
+        autoFit: true,        // shrink to fit the shape
+        lineSpacing: 16,
+        margin: [4, 2, 2, 2],
       });
     }
 
-    // Specifications bullets (from sheet / specs.ts / specs/*.txt)
-    const rawBullets = await resolveBullets(p);
-    const bullets = clampBullets(rawBullets, /*maxBullets*/ 8, /*maxCharsEach*/ 110);
-    if (bullets.length) {
-      s.addText(bullets, {
-        x: 6.2, y: 3.5, w: 6.2, h: 1.9,
-        fontSize: 12, bullet: { type: "bullet" }, valign: "top",
+    // Specs bullets – use sheet first; if empty, use fallback map
+    const specs =
+      (p.specsBullets && p.specsBullets.length ? p.specsBullets : bulletsFor(p)).slice(0, 8);
+
+    if (specs.length) {
+      s.addText(specs.map(t => `• ${t}`).join("\n"), {
+        ...RECT.specs,
+        fontSize: 12,
+        valign: "top",
+        autoFit: true,
+        lineSpacing: 16,
       });
     }
 
     // Links
-    let linkY = 5.6;
-    if (p.url) {
-      s.addText("Product page", {
-        x: 6.2, y: linkY, w: 6.2, h: 0.3, fontSize: 12,
-        underline: true, hyperlink: { url: p.url },
-      });
-      linkY += 0.35;
-    }
-    if (p.pdfUrl) {
-      s.addText("Spec sheet (PDF)", {
-        x: 6.2, y: linkY, w: 6.2, h: 0.3, fontSize: 12,
-        underline: true, hyperlink: { url: p.pdfUrl },
-      });
-    }
+    if (p.url)    s.addText("Product page",    { ...RECT.link1, fontSize: 12, underline: true, hyperlink: { url: p.url } });
+    if (p.pdfUrl) s.addText("Spec sheet (PDF)",{ ...RECT.link2, fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl } });
 
-    // Category (small, under image)
-    if (p.category) {
-      s.addText(`Category: ${p.category}`, {
-        x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666",
-      });
-    }
+    // Optional category tag under the image
+    if (p.category)
+      s.addText(`Category: ${p.category}`, { x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666" });
   }
 
-  /* ---------- BACK PAGES ---------- */
-
+  // ---------- BACK PAGES ----------
   for (const url of BACK_URLS) {
     try {
       const s = pptx.addSlide();
-      const data = await urlToDataUrl(url);
-      s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+      s.addImage({
+        data: await urlToDataUrl(url),
+        x: 0, y: 0, w: FULL_W, h: FULL_H,
+        sizing: { type: "cover", w: FULL_W, h: FULL_H },
+      } as any);
     } catch {}
   }
 
-  const filename = `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`;
-  await pptx.writeFile({ fileName: filename });
+  await pptx.writeFile({
+    fileName: `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`,
+  });
 }
