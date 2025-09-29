@@ -1,101 +1,76 @@
 // src/lib/products.ts
 import type { Product } from "../types";
 
-// Helper to normalize header names
-const norm = (s: string) => s?.toLowerCase().trim();
-
-// Find a column index by any of these header names
-function findIdx(headers: string[], aliases: string[]): number {
-  const H = headers.map(norm);
-  for (const a of aliases.map(norm)) {
-    const i = H.indexOf(a);
-    if (i !== -1) return i;
-  }
-  return -1;
-}
-
-function col(row: string[], i: number) {
-  return i >= 0 ? String(row[i] ?? "").trim() : "";
-}
-
-const IMG_REGEX = /https?:\/\/\S+\.(?:png|jpe?g|webp)(?:\?\S+)?/i;
-
+// fetch rows from the Sheets proxy (unchanged)
 export async function fetchProducts(range: string): Promise<Product[]> {
-  // Your existing sheets API. Keep the same endpoint you already use.
-  const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, {
-    cache: "no-store",
-  });
-  if (!r.ok) throw new Error(`Sheets fetch failed: ${r.status}`);
-  const data = await r.json();
+  const res = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`);
+  if (!res.ok) throw new Error(`sheets ${res.status}`);
+  const rows: Record<string, string>[] = await res.json();
+  return rows.map(normalizeRow).filter(p => p.name || p.code);
+}
 
-  // Expect data.values = string[][] with first row as headers
-  const values: string[][] = data.values ?? data?.data?.values ?? [];
-  if (!values.length) return [];
+// --- helpers ---------------------------------------------------------------
 
-  const headers = values[0] as string[];
-  const rows = values.slice(1);
-
-  // Map common header variants
-  const iName = findIdx(headers, ["Name", "Product", "Product Name", "Title"]);
-  const iCode = findIdx(headers, ["SKU", "Code", "Item Code"]);
-  const iCat  = findIdx(headers, ["Category", "Cat"]);
-  const iDesc = findIdx(headers, ["Description", "Desc", "Details"]);
-  const iImg  = findIdx(headers, [
-    "Image Proxied",
-    "Image",
-    "Image URL",
-    "Photo",
-    "Picture",
-    "Thumbnail",
-  ]);
-  const iUrl  = findIdx(headers, ["URL", "Link", "Product URL", "Product page"]);
-  const iPdf  = findIdx(headers, ["PDF", "Spec", "Spec sheet", "Spec sheet (PDF)", "Spec PDF"]);
-  const iSpecs = findIdx(headers, ["Specs", "Specifications", "Features", "Specs bullets"]);
-
-  const products: Product[] = rows.map((row) => {
-    const rawName = col(row, iName);
-    const code = col(row, iCode);
-    const category = col(row, iCat);
-    const url = col(row, iUrl);
-    const pdfUrl = col(row, iPdf);
-
-    let desc = col(row, iDesc);
-    let image = col(row, iImg);
-
-    // If there's no explicit image column, try to pull the first image URL out of description
-    if (!image && desc) {
-      const m = desc.match(IMG_REGEX);
-      if (m) {
-        image = m[0];
-        // remove the image URL from the visible description
-        desc = desc.replace(new RegExp(m[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "").trim();
+function pick(row: Record<string, any>, keys: string[]) {
+  for (const k of keys) {
+    if (k in row && row[k] != null && String(row[k]).trim() !== "") {
+      return String(row[k]).trim();
+    }
+    const low = k.toLowerCase();
+    for (const kk of Object.keys(row)) {
+      if (kk.trim().toLowerCase() === low) {
+        const v = row[kk];
+        if (v != null && String(v).trim() !== "") return String(v).trim();
       }
     }
+  }
+  return "";
+}
 
-    // Build bullets
-    const specsRaw = col(row, iSpecs);
-    const specsBullets =
-      specsRaw
-        ?.split(/\r?\n|•|\u2022|\||;/)
-        .map((s) => s.trim())
-        .filter(Boolean) ?? [];
+function splitBullets(s: string) {
+  if (!s) return [];
+  return s
+    .split(/\r?\n|;|•|–|—|(?:^|[\s])-(?=\s)/g)
+    .map(t => t.replace(/^[\s•–—-]+/, "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
 
-    // Proxy the image for PPTX (and browser if you prefer)
-    const imageProxied = image ? `/api/img-proxy?url=${encodeURIComponent(image)}` : undefined;
+// --- row → Product ---------------------------------------------------------
 
-    return {
-      name: rawName || "",            // keep raw label (not URL)
-      code,
-      category,
-      description: desc,
-      url,
-      pdfUrl,
-      image,
-      imageProxied,
-      specsBullets,
-    };
-  });
+function normalizeRow(row: Record<string, any>): Product {
+  const name        = pick(row, ["Name", "Product name", "Title"]);
+  const code        = pick(row, ["Code", "SKU"]);
+  const description = pick(row, ["Description", "Desc", "Details"]);
+  const category    = pick(row, ["Category", "Cat"]);
+  const url         = pick(row, ["Url", "URL", "Link"]);
 
-  // Filter out completely empty rows
-  return products.filter((p) => p.name || p.code || p.url || p.description);
+  // your exact columns
+  const imageUrl    = pick(row, ["ImageURL", "Image Url", "Image", "Photo", "Picture"]);
+  const pdfUrlRaw   = pick(row, ["PdfURL", "PDFURL", "Pdf Url", "PDF"]);
+  const pdfKey      = pick(row, ["PdfKey", "PDFKey", "PDF Key"]);
+
+  // specs: use your SpecsBullets first
+  const specsRaw      = pick(row, ["SpecsBullets", "Specs", "Specifications"]);
+  const specsBullets  = splitBullets(specsRaw);
+
+  // final PDF URL: prefer PdfURL; if blank but PdfKey present, point to local /public/specs/<key>.pdf
+  const pdfUrl = pdfUrlRaw || (pdfKey ? `/specs/${pdfKey}.pdf` : "");
+
+  // build proxied image URL so CORS/mime is safe
+  const imageProxied = imageUrl
+    ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}`
+    : undefined;
+
+  return {
+    name,
+    code,
+    description,
+    category,
+    url,
+    pdfUrl,
+    image: imageUrl,
+    imageProxied,
+    specsBullets,
+  } as Product;
 }
