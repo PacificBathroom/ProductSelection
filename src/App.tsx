@@ -4,7 +4,7 @@ import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
 import { exportPptx } from "./lib/exportPptx";
 
-// small helpers
+// tiny helpers
 const includes = (h: string, n: string) => h.toLowerCase().includes(n.toLowerCase());
 const title = (s?: string) => (s ?? "").trim() || "—";
 
@@ -46,7 +46,7 @@ export default function App() {
 
   const visible = useMemo(() => {
     let a = [...(items ?? [])];
-    if (q)
+    if (q) {
       a = a.filter(
         (p) =>
           includes(p.name ?? "", q) ||
@@ -54,6 +54,7 @@ export default function App() {
           includes(p.description ?? "", q) ||
           includes(p.category ?? "", q)
       );
+    }
     if (cat !== "All") a = a.filter((p) => p.category === cat);
     if (sort === "name") a.sort((x, y) => (x.name || "").localeCompare(y.name || ""));
     return a;
@@ -65,7 +66,6 @@ export default function App() {
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
   const [date, setDate] = useState("");
 
   // export
@@ -74,54 +74,14 @@ export default function App() {
       alert("Select at least one product.");
       return;
     }
-
-    // helpful logs
-    console.log("[export] projectName:", projectName);
-    console.log("[export] clientName:", clientName);
-    console.log("[export] contact:", { contactName, email, phone, address, date });
-    console.log("[export] selectedList length:", selectedList.length);
-    console.log("[export] first item:", selectedList[0]);
-
     await exportPptx({
       projectName,
       clientName,
       contactName,
       email,
       phone,
-      address,
-      date: date || new Date().toLocaleDateString(),
+      date,
       items: selectedList,
-    });
-  }
-
-  // debug export to validate exporter independently of sheet data
-  async function onDebugExport() {
-    const fakeItem: any = {
-      name: "Debug Product",
-      code: "SAMPLE",
-      description: "This is a debug product to verify PPT export.",
-      imageUrl: "",
-      imageProxied: "",
-      specsBullets: ["One", "Two", "Three"],
-      PdfKey: "sample", // requires public/specs/sample.pdf in your repo
-      category: "Debug",
-      contact: {
-        name: "Alex Debug",
-        email: "alex@example.com",
-        phone: "0400 000 000",
-        address: "123 Example St",
-      },
-    };
-
-    await exportPptx({
-      projectName: "DEBUG PROJECT",
-      clientName: "DEBUG CLIENT",
-      contactName: "Casey Exporter",
-      email: "casey@example.com",
-      phone: "0400 000 001",
-      address: "Suite 1, 123 Test Rd",
-      date: new Date().toLocaleDateString(),
-      items: [fakeItem],
     });
   }
 
@@ -149,7 +109,6 @@ export default function App() {
             />
           </label>
         </div>
-
         <div className="grid2">
           <label>
             <div>Your name (contact)</div>
@@ -168,7 +127,6 @@ export default function App() {
             />
           </label>
         </div>
-
         <div className="grid2">
           <label>
             <div>Email</div>
@@ -186,19 +144,6 @@ export default function App() {
               placeholder="0000 000 000"
             />
           </label>
-        </div>
-
-        {/* Address row */}
-        <div className="grid2">
-          <label>
-            <div>Address</div>
-            <input
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              placeholder="Suite 1, 123 Example St, Brisbane QLD"
-            />
-          </label>
-          <div /> {/* spacer to keep grid balanced */}
         </div>
       </div>
 
@@ -229,13 +174,11 @@ export default function App() {
           <option value="sheet">Sheet order</option>
           <option value="name">Name (A–Z)</option>
         </select>
+
         <div className="spacer" />
         <div className="muted">Selected: {selectedList.length}</div>
         <button className="primary" onClick={onExportClick}>
           Export PPTX
-        </button>
-        <button onClick={onDebugExport} title="Exports a sample deck to verify the exporter">
-          Debug Export
         </button>
       </div>
 
@@ -255,8 +198,11 @@ export default function App() {
               </label>
 
               <div className="thumb">
-                {p.imageProxied ? (
-                  <img src={p.imageProxied} alt={p.name || p.code || "product"} />
+                {(p.imageProxied || p.image) ? (
+                  <img
+                    src={p.imageProxied ?? p.image!}
+                    alt={p.name || p.code || "product"}
+                  />
                 ) : (
                   <div className="ph">No image</div>
                 )}
