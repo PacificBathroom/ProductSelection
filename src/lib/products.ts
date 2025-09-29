@@ -1,77 +1,68 @@
-// src/lib/products.ts
 import type { Product } from "../types";
 
 type Row = Record<string, string | undefined>;
 
-/** Turn "/product/1500mm-waterproof-shaving-cabinet/" -> "1500mm Waterproof Shaving Cabinet" */
+/** url slug -> Title Case */
 function nameFromUrl(u: string): string {
   try {
     const path = decodeURIComponent(new URL(u, "https://x.example").pathname);
     const last = path.split("/").filter(Boolean).pop() || "";
-    return last
-      .replace(/[-_]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\b\w/g, (m) => m.toUpperCase());
-  } catch {
-    return u;
-  }
+    return last.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim()
+               .replace(/\b\w/g, (m) => m.toUpperCase());
+  } catch { return u; }
 }
 
-/** Split the SpecsBullets column into an array no matter how it’s typed */
-function parseBullets(raw?: string): string[] {
+/** parse SpecsBullets from string (pipes/newlines/bullets) or array */
+function parseBullets(raw?: string | string[]): string[] {
   if (!raw) return [];
-  // remove leading bullet chars and split on pipes or newlines
-  return raw
-    .split(/\r?\n|[|]/g)
-    .map((s) => s.replace(/^[•\-\u2022\s]+/, "").trim())
-    .filter(Boolean);
+  const s = Array.isArray(raw) ? raw.join("|") : raw;
+  return s.split(/\r?\n|[|]/g)
+          .map((x) => x.replace(/^[•\-\u2022\s]+/, "").trim())
+          .filter(Boolean);
 }
 
-function proxied(url?: string | null): string | undefined {
-  if (!url) return;
-  // If it’s already a local file (e.g. /specs/X.pdf), leave it.
-  if (/^\/(specs|branding)\//.test(url)) return url;
-  return `/api/file-proxy?url=${encodeURIComponent(url)}`;
-}
+const proxied = (url?: string | null) =>
+  url ? (/^\/(specs|branding)\//.test(url) ? url
+       : `/api/file-proxy?url=${encodeURIComponent(url)}`) : undefined;
 
-function proxiedPdf(url?: string | null): string | undefined {
-  if (!url) return;
-  if (url.startsWith("/specs/")) return url; // local file we ship
-  return `/api/pdf-proxy?url=${encodeURIComponent(url)}`;
-}
+const proxiedPdf = (url?: string | null) =>
+  url ? (url.startsWith("/specs/") ? url
+       : `/api/pdf-proxy?url=${encodeURIComponent(url)}`) : undefined;
 
-export async function fetchProducts(_range: string): Promise<Product[]> {
-  // You already had this wired to Google Sheets; keep your fetch as-is and
-  // call the mapper below for each row object.
-  const res = await fetch("/api/sheets?range=Products!A:Z");
-  if (!res.ok) throw new Error("Sheets fetch failed");
-  const rows: Row[] = await res.json();
+export async function fetchProducts(range: string): Promise<Product[]> {
+  const res = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`);
+  if (!res.ok) throw new Error(`Sheets fetch failed (${res.status})`);
 
-  return rows.map((r): Product => {
-    // Sheet headings you confirmed:
-    // Select, Code, PdfKey, Url, Name, ImageURL, Description, SpecsBullets, PdfURL, ... , Category
+  const payload: any = await res.json();
+
+  // Accept multiple response shapes
+  let rows: any[] = [];
+  if (Array.isArray(payload)) rows = payload;
+  else if (Array.isArray(payload?.rows)) rows = payload.rows;
+  else if (Array.isArray(payload?.data)) rows = payload.data;
+  else if (Array.isArray(payload?.values)) {
+    // Google Sheets "values" 2D array -> objects using header row
+    const [hdr = [], ...vals] = payload.values;
+    rows = vals.map((arr: any[]) =>
+      Object.fromEntries(hdr.map((h: string, i: number) => [h, arr[i]]))
+    );
+  } else {
+    throw new Error("Unexpected sheets response shape");
+  }
+
+  return rows.map((r: Row): Product => {
     const url = (r.Url || "").trim();
     let name = (r.Name || "").trim();
-
-    // If Name cell is actually a URL, fix it
-    if (!name || /^https?:\/\//i.test(name)) {
-      if (url) name = nameFromUrl(url);
-    }
-
-    const imageUrl = (r.ImageURL || "").trim();
-    const pdfUrl = (r.PdfURL || "").trim();
-
-    const specsBullets = parseBullets(r.SpecsBullets);
+    if (!name || /^https?:\/\//i.test(name)) name = url ? nameFromUrl(url) : name;
 
     return {
       code: (r.Code || "").trim(),
       name,
       url: url || undefined,
-      imageProxied: proxied(imageUrl),
+      imageProxied: proxied((r.ImageURL || "").trim()),
       description: (r.Description || "").trim(),
-      specsBullets,
-      pdfUrl: proxiedPdf(pdfUrl),
+      specsBullets: parseBullets(r.SpecsBullets),
+      pdfUrl: proxiedPdf((r.PdfURL || "").trim()),
       category: (r.Category || "").trim(),
     };
   });
