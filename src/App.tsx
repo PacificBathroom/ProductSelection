@@ -198,15 +198,13 @@ export default function App() {
               </label>
 
               <div className="thumb">
-                {(p.imageProxied || p.image) ? (
-                  <img
-                    src={p.imageProxied ?? p.image!}
-                    alt={p.name || p.code || "product"}
-                  />
-                ) : (
-                  <div className="ph">No image</div>
-                )}
-              </div>
+  {p.imageProxied || p.imageUrl ? (
+    <img src={p.imageProxied || p.imageUrl!} alt={p.name || p.code || "product"} />
+  ) : (
+    <div className="ph">No image</div>
+  )}
+</div>
+
 
               <div className="body">
                 <div className="name">{title(p.name)}</div>
