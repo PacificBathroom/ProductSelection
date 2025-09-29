@@ -69,21 +69,19 @@ export default function App() {
   const [date, setDate] = useState("");
 
   // export
-  async function onExportClick() {
-    if (selectedList.length === 0) {
-      alert("Select at least one product.");
-      return;
-    }
-    await exportPptx({
-      projectName,
-      clientName,
-      contactName,
-      email,
-      phone,
-      date,
-      items: selectedList,
-    });
+ async function onExportClick() {
+  // if nothing is selected, export everything currently visible
+  const list = selectedList.length ? selectedList : visible;
+  if (!list.length) {
+    alert("No products to export.");
+    return;
   }
+  await exportPptx({
+    projectName, clientName, contactName, email, phone, date,
+    items: list,
+  });
+}
+
 
   return (
     <div className="wrap">
