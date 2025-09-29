@@ -57,8 +57,20 @@ button.primary:hover { filter: brightness(.95); cursor: pointer; }
 .checkbox { position: absolute; left: 10px; top: 10px; z-index: 2; background: rgba(255,255,255,.8); padding: 4px 6px; border-radius: 8px; }
 .checkbox input { width: 18px; height: 18px; }
 
-.thumb { height: 170px; background: #f3f4f6; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: center; }
-.thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb { 
+  height: 170px; 
+  background: #fff;      /* white letterbox instead of grey */
+  border-bottom: 1px solid #eee; 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+  padding: 4px;          /* keeps image off the very edge */
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;   /* show full image, no cropping */
+  object-position: center;}
 .thumb .ph { color: #9ca3af; font-size: 12px; }
 
 .body { padding: 12px; }
