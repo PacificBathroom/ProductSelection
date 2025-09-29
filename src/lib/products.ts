@@ -1,71 +1,78 @@
+// src/lib/products.ts
 import type { Product } from "../types";
 
-/** Small helpers */
-const clean = (s?: string) => (s ?? "").toString().trim();
-const isHttp = (s?: string) => /^https?:\/\//i.test(s ?? "");
+type Row = Record<string, string | undefined>;
 
-/** Turn the free-form “SpecsBullets” cell into an array of bullets */
-function parseSpecs(raw?: string): string[] {
-  if (!raw) return [];
-  return raw
-    .replace(/\r/g, "\n")
-    .split(/\u2022|•|\n|;|,| - |\t/) // handles • bullets, newlines, semicolons, etc.
-    .map((s) => clean(s))
-    .filter((s) => s.length > 0 && !isHttp(s)) // drop blank bits and stray URLs
-    .slice(0, 12); // reasonable cap so slides don’t overflow
+/** Turn "/product/1500mm-waterproof-shaving-cabinet/" -> "1500mm Waterproof Shaving Cabinet" */
+function nameFromUrl(u: string): string {
+  try {
+    const path = decodeURIComponent(new URL(u, "https://x.example").pathname);
+    const last = path.split("/").filter(Boolean).pop() || "";
+    return last
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (m) => m.toUpperCase());
+  } catch {
+    return u;
+  }
 }
 
-type SheetResponse = { values: string[][] };
+/** Split the SpecsBullets column into an array no matter how it’s typed */
+function parseBullets(raw?: string): string[] {
+  if (!raw) return [];
+  // remove leading bullet chars and split on pipes or newlines
+  return raw
+    .split(/\r?\n|[|]/g)
+    .map((s) => s.replace(/^[•\-\u2022\s]+/, "").trim())
+    .filter(Boolean);
+}
 
-/**
- * Fetch products from our sheet via the existing /api/sheets endpoint.
- * Expects the first row to be headers that match the names in your message.
- */
-export async function fetchProducts(range: string): Promise<Product[]> {
-  const res = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`);
-  if (!res.ok) throw new Error("Failed to fetch sheet rows");
-  const data = (await res.json()) as SheetResponse;
-  const [header, ...rows] = data.values ?? [];
-  if (!header) return [];
+function proxied(url?: string | null): string | undefined {
+  if (!url) return;
+  // If it’s already a local file (e.g. /specs/X.pdf), leave it.
+  if (/^\/(specs|branding)\//.test(url)) return url;
+  return `/api/file-proxy?url=${encodeURIComponent(url)}`;
+}
 
-  // Build a map like { Name: 4, ImageURL: 5, ... }
-  const index: Record<string, number> = {};
-  header.forEach((h, i) => (index[clean(h)] = i));
-  const cell = (r: string[], key: string) =>
-    clean(r[index[key] ?? -1]);
+function proxiedPdf(url?: string | null): string | undefined {
+  if (!url) return;
+  if (url.startsWith("/specs/")) return url; // local file we ship
+  return `/api/pdf-proxy?url=${encodeURIComponent(url)}`;
+}
 
-  const products: Product[] = rows.map((r) => {
-    const name = cell(r, "Name");
-    const code = cell(r, "Code");
-    const url = cell(r, "Url");
-    const imageUrl = cell(r, "ImageURL") || cell(r, "Image"); // tolerate either
-    const description = cell(r, "Description");
-    const pdfKey = cell(r, "PdfKey");
-    let pdfUrl = cell(r, "PdfURL");
+export async function fetchProducts(_range: string): Promise<Product[]> {
+  // You already had this wired to Google Sheets; keep your fetch as-is and
+  // call the mapper below for each row object.
+  const res = await fetch("/api/sheets?range=Products!A:Z");
+  if (!res.ok) throw new Error("Sheets fetch failed");
+  const rows: Row[] = await res.json();
 
-    // Prefer a local spec file if PdfKey exists, otherwise proxy the remote PdfURL
-    if (!pdfUrl && pdfKey) pdfUrl = `/specs/${pdfKey}.pdf`;
-    if (pdfUrl && isHttp(pdfUrl)) {
-      // run through our proxy so CORS/SSL can’t break the PPTX
-      pdfUrl = `/api/file-proxy?url=${encodeURIComponent(pdfUrl)}`;
+  return rows.map((r): Product => {
+    // Sheet headings you confirmed:
+    // Select, Code, PdfKey, Url, Name, ImageURL, Description, SpecsBullets, PdfURL, ... , Category
+    const url = (r.Url || "").trim();
+    let name = (r.Name || "").trim();
+
+    // If Name cell is actually a URL, fix it
+    if (!name || /^https?:\/\//i.test(name)) {
+      if (url) name = nameFromUrl(url);
     }
 
-    const imageProxied = imageUrl
-      ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}`
-      : undefined;
+    const imageUrl = (r.ImageURL || "").trim();
+    const pdfUrl = (r.PdfURL || "").trim();
+
+    const specsBullets = parseBullets(r.SpecsBullets);
 
     return {
-      code: code || undefined,
+      code: (r.Code || "").trim(),
+      name,
       url: url || undefined,
-      name: name || undefined,
-      imageUrl: imageUrl || undefined,
-      imageProxied,
-      description: description || undefined,
-      specsBullets: parseSpecs(cell(r, "SpecsBullets")),
-      pdfUrl: pdfUrl || undefined,
-      category: cell(r, "Category") || undefined,
-    } as Product;
+      imageProxied: proxied(imageUrl),
+      description: (r.Description || "").trim(),
+      specsBullets,
+      pdfUrl: proxiedPdf(pdfUrl),
+      category: (r.Category || "").trim(),
+    };
   });
-
-  return products;
 }
