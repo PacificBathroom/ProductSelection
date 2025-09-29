@@ -125,6 +125,13 @@ export async function exportPptx({
       s.addText("Product page", { x: 6.2, y: linkY,   w: 6.2, h: 0.35, fontSize: 12, underline: true, hyperlink: { url: p.url } });
     if (p.pdfUrl)
       s.addText("Spec sheet (PDF)", { x: 6.2, y: linkY + 0.4, w: 6.2, h: 0.35, fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl } });
+if (p.specsBullets?.length) {
+  s.addText(p.specsBullets.join("\n"), {
+    x: 6.2, y: 2.3, w: 6.2, h: 2.6,
+    fontSize: 12,
+    bullet: { type: "bullet" }   // real bullets, not just "• " characters
+  });
+}
 
     if (p.category)
       s.addText(`Category: ${p.category}`, { x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666" });
