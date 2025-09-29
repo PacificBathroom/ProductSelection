@@ -69,7 +69,7 @@ export default function App() {
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState("");
 
-  // export (fallback to all visible if nothing selected)
+  // export (fallback to all visible if none selected)
   async function onExportClick() {
     const list = selectedList.length ? selectedList : visible;
     if (!list.length) {
@@ -170,25 +170,4 @@ export default function App() {
         </select>
         <select
           className="sort"
-          value={sort}
-          onChange={(e) => setSort(e.target.value as "sheet" | "name")}
-        >
-          <option value="sheet">Sheet order</option>
-          <option value="name">Name (A–Z)</option>
-        </select>
-
-        <div className="spacer" />
-        <div className="muted">Selected: {selectedList.length}</div>
-        <button className="primary" onClick={onExportClick}>
-          Export PPTX
-        </button>
-      </div>
-
-      {/* status */}
-      {err && <p className="error">Error: {err}</p>}
-      {!items && !err && <p>Loading…</p>}
-
-      {/* grid */}
-      <div className="grid">
-        {(visible ?? []).map((p: Product, i: number) => {
-         
+          value={sort
