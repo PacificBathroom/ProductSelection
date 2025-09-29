@@ -1,103 +1,101 @@
 // src/lib/products.ts
 import type { Product } from "../types";
 
-function normalizeSpecs(raw?: string): string[] {
-  let s = (raw ?? "").toString();
+// Helper to normalize header names
+const norm = (s: string) => s?.toLowerCase().trim();
 
-  // unify newlines
-  s = s.replace(/\r\n?/g, "\n");
-
-  // turn typical bullet markers into new lines
-  s = s
-    .replace(/[•▪◦·]/g, "\n") // bullets to newline
-    .replace(/(\n|^)\s*-\s+/g, "\n") // "- bullet"
-    .replace(/(\n|^)\s*–\s+/g, "\n") // en dash bullet
-    .replace(/;/g, "\n"); // semicolons to newline
-
-  // split, trim, de-dup, drop URLs and empties
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const line of s.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    if (/^https?:\/\//i.test(t)) continue;
-    if (seen.has(t.toLowerCase())) continue;
-    seen.add(t.toLowerCase());
-    out.push(t);
+// Find a column index by any of these header names
+function findIdx(headers: string[], aliases: string[]): number {
+  const H = headers.map(norm);
+  for (const a of aliases.map(norm)) {
+    const i = H.indexOf(a);
+    if (i !== -1) return i;
   }
-  return out;
+  return -1;
 }
 
+function col(row: string[], i: number) {
+  return i >= 0 ? String(row[i] ?? "").trim() : "";
+}
+
+const IMG_REGEX = /https?:\/\/\S+\.(?:png|jpe?g|webp)(?:\?\S+)?/i;
+
 export async function fetchProducts(range: string): Promise<Product[]> {
-  const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`Sheets ${r.status}`);
+  // Your existing sheets API. Keep the same endpoint you already use.
+  const r = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`, {
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`Sheets fetch failed: ${r.status}`);
   const data = await r.json();
 
-  const rows: any[][] = data.values ?? [];
-  if (rows.length === 0) return [];
+  // Expect data.values = string[][] with first row as headers
+  const values: string[][] = data.values ?? data?.data?.values ?? [];
+  if (!values.length) return [];
 
-  const header = rows[0].map((h) => (h ?? "").toString().trim().toLowerCase());
+  const headers = values[0] as string[];
+  const rows = values.slice(1);
 
-  function col(name: string, alts: string[] = []): number {
-    const names = [name, ...alts].map((n) => n.toLowerCase());
-    return header.findIndex((h) => names.includes(h));
-  }
+  // Map common header variants
+  const iName = findIdx(headers, ["Name", "Product", "Product Name", "Title"]);
+  const iCode = findIdx(headers, ["SKU", "Code", "Item Code"]);
+  const iCat  = findIdx(headers, ["Category", "Cat"]);
+  const iDesc = findIdx(headers, ["Description", "Desc", "Details"]);
+  const iImg  = findIdx(headers, [
+    "Image Proxied",
+    "Image",
+    "Image URL",
+    "Photo",
+    "Picture",
+    "Thumbnail",
+  ]);
+  const iUrl  = findIdx(headers, ["URL", "Link", "Product URL", "Product page"]);
+  const iPdf  = findIdx(headers, ["PDF", "Spec", "Spec sheet", "Spec sheet (PDF)", "Spec PDF"]);
+  const iSpecs = findIdx(headers, ["Specs", "Specifications", "Features", "Specs bullets"]);
 
-  const idx = {
-    url: col("url"),
-    code: col("code", ["sku", "product code"]),
-    name: col("name", ["product name"]),
-    imageUrl: col("imageurl", ["image"]),
-    description: col("description", ["desc"]),
-    specs: col("specsbullets", ["specifications", "specs"]),
-    pdfUrl: col("pdfurl", ["spec sheet url", "pdf"]),
-    pdfFile: col("pdffile"),
-    pdfKey: col("pdfkey"),
-    contactName: col("contactname", ["prepared by", "sales rep"]),
-    contactEmail: col("contactemail", ["email"]),
-    contactPhone: col("contactphone", ["phone", "mobile"]),
-    contactAddress: col("contactaddress", ["address"]),
-    category: col("category"),
-  };
+  const products: Product[] = rows.map((row) => {
+    const rawName = col(row, iName);
+    const code = col(row, iCode);
+    const category = col(row, iCat);
+    const url = col(row, iUrl);
+    const pdfUrl = col(row, iPdf);
 
-  const products: Product[] = rows.slice(1).map((raw) => {
-    const url = idx.url >= 0 ? (raw[idx.url] ?? "").toString().trim() : "";
-    const code = idx.code >= 0 ? (raw[idx.code] ?? "").toString().trim() : "";
-    const name = idx.name >= 0 ? (raw[idx.name] ?? "").toString().trim() : "";
-    const imageUrl = idx.imageUrl >= 0 ? (raw[idx.imageUrl] ?? "").toString().trim() : "";
-    const description = idx.description >= 0 ? (raw[idx.description] ?? "").toString() : "";
-    const specsRaw = idx.specs >= 0 ? (raw[idx.specs] ?? "").toString() : "";
-    const pdfUrl = idx.pdfUrl >= 0 ? (raw[idx.pdfUrl] ?? "").toString().trim() : "";
-    const category = idx.category >= 0 ? (raw[idx.category] ?? "").toString().trim() : "";
+    let desc = col(row, iDesc);
+    let image = col(row, iImg);
 
-    const pdfFile = idx.pdfFile >= 0 ? (raw[idx.pdfFile] ?? "").toString().trim() : "";
-    const pdfKey = idx.pdfKey >= 0 ? (raw[idx.pdfKey] ?? "").toString().trim() : "";
+    // If there's no explicit image column, try to pull the first image URL out of description
+    if (!image && desc) {
+      const m = desc.match(IMG_REGEX);
+      if (m) {
+        image = m[0];
+        // remove the image URL from the visible description
+        desc = desc.replace(new RegExp(m[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "").trim();
+      }
+    }
 
-    const contact = {
-      name: idx.contactName >= 0 ? (raw[idx.contactName] ?? "").toString().trim() : "",
-      email: idx.contactEmail >= 0 ? (raw[idx.contactEmail] ?? "").toString().trim() : "",
-      phone: idx.contactPhone >= 0 ? (raw[idx.contactPhone] ?? "").toString().trim() : "",
-      address: idx.contactAddress >= 0 ? (raw[idx.contactAddress] ?? "").toString().trim() : "",
-    };
+    // Build bullets
+    const specsRaw = col(row, iSpecs);
+    const specsBullets =
+      specsRaw
+        ?.split(/\r?\n|•|\u2022|\||;/)
+        .map((s) => s.trim())
+        .filter(Boolean) ?? [];
 
-    // use file-proxy for images to avoid CORS
-    const imageProxied = imageUrl ? `/api/file-proxy?url=${encodeURIComponent(imageUrl)}` : "";
+    // Proxy the image for PPTX (and browser if you prefer)
+    const imageProxied = image ? `/api/img-proxy?url=${encodeURIComponent(image)}` : undefined;
 
     return {
-      url,
+      name: rawName || "",            // keep raw label (not URL)
       code,
-      name,
-      imageUrl,
-      imageProxied,
-      description,
-      specsBullets: normalizeSpecs(specsRaw),
-      pdfUrl,
       category,
-      PdfFile: pdfFile,
-      PdfKey: pdfKey,
-      contact,
-    } as Product;
+      description: desc,
+      url,
+      pdfUrl,
+      image,
+      imageProxied,
+      specsBullets,
+    };
   });
 
-  return products.filter((p) => p.name || p.code || p.url || p.imageUrl);
+  // Filter out completely empty rows
+  return products.filter((p) => p.name || p.code || p.url || p.description);
 }
