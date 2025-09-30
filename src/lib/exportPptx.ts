@@ -50,21 +50,21 @@ async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> 
   return { w: img.naturalWidth, h: img.naturalHeight };
 }
 
-// Fit into a box while preserving aspect ratio; return centered rect
+// Fit into a box while preserving aspect ratio (unchanged)
 function fitIntoBox(
   imgW: number, imgH: number,
   boxX: number, boxY: number, boxW: number, boxH: number
-): { x: number; y: number; w: number; h: number } {
+) {
   const rImg = imgW / imgH;
   const rBox = boxW / boxH;
   let w: number, h: number;
-  if (rImg >= rBox) { w = boxW; h = w / rImg; } else { h = boxH; w = h * rImg; }
+  if (rImg >= rBox) { w = boxW; h = w / rImg; }
+  else { h = boxH; w = h * rImg; }
   const x = boxX + (boxW - w) / 2;
   const y = boxY + (boxH - h) / 2;
   return { x, y, w, h };
 }
 
-// Add a centered, non-cropped image into a box
 async function addContainedImage(
   slide: any,
   dataUrl: string,
@@ -75,38 +75,42 @@ async function addContainedImage(
   slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// Build a list of candidate preview image paths we’ll try in order.
-// We accept: /specs/<basename>.(png|jpg|jpeg|webp)
-// Sources for <basename>: (1) product code, (2) pdf basename, (3) decoded ?url=… basename.
-function buildSpecPreviewCandidates(p: Product): string[] {
-  const addAll = (base: string, set: Set<string>) => {
-    if (!base) return;
-    ["png", "jpg", "jpeg", "webp"].forEach(ext => set.add(`/specs/${base}.${ext}`));
-  };
-
-  const out = new Set<string>();
-
-  // #1. Product code (handles PMB420 etc.)
-  if (p.code) addAll(String(p.code).trim(), out);
-
-  // #2. From pdfUrl
-  const pdf = p.pdfUrl || "";
-  if (pdf.startsWith("/specs/")) {
-    const base = pdf.split("/").pop()!.replace(/\.pdf(\?.*)?$/i, "");
-    addAll(base, out);
-  } else if (/\burl=/.test(pdf)) {
-    try {
-      const decoded = decodeURIComponent(pdf.replace(/^.*\burl=/, "").split("&")[0]);
-      const base = (decoded.split("/").pop() || "").replace(/\.pdf(\?.*)?$/i, "");
-      addAll(base, out);
-    } catch { /* ignore */ }
-  } else if (/^https?:\/\//i.test(pdf)) {
-    const base = (pdf.split("/").pop() || "").replace(/\.pdf(\?.*)?$/i, "");
-    addAll(base, out);
+// derive a likely /specs/NAME.ext from a pdf url
+function guessSpecBaseFromPdf(pdfUrl?: string): string | undefined {
+  if (!pdfUrl) return;
+  if (pdfUrl.startsWith("/specs/")) {
+    const base = pdfUrl.split("/").pop() || "";
+    return base.replace(/\.pdf(\?.*)?$/i, "");
   }
-
-  return Array.from(out);
+  const m = pdfUrl.match(/[?&]url=([^&]+)/);
+  if (m) try {
+    const decoded = decodeURIComponent(m[1]);
+    const base = decoded.split("/").pop() || "";
+    return base.replace(/\.pdf(\?.*)?$/i, "");
+  } catch {}
+  if (/^https?:\/\//i.test(pdfUrl)) {
+    const base = pdfUrl.split("/").pop() || "";
+    return base.replace(/\.pdf(\?.*)?$/i, "");
+  }
 }
+
+// try multiple image extensions (png / jpg / jpeg / webp)
+async function findSpecPreviewUrl(pdfUrl?: string, code?: string) {
+  const key = guessSpecBaseFromPdf(pdfUrl) || code;
+  if (!key) return undefined;
+  const stems = [key, key.replace(/\s+/g, "_"), key.replace(/\s+/g, "")];
+  const exts = ["png", "jpg", "jpeg", "webp"];
+  for (const stem of stems) {
+    for (const ext of exts) {
+      const url = `/specs/${stem}.${ext}`;
+      try { await urlToDataUrl(url); return url; } catch {}
+    }
+  }
+  return undefined;
+}
+
+
+
 
 /* ---------------- main ---------------- */
 
