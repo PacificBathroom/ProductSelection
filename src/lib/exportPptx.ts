@@ -1,13 +1,13 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-const FULL_W = 10;     // pptxgen default 16:9 width (inches)
-const FULL_H = 5.625;
+const FULL_W = 10;     // pptxgen default 16:9 width (in)
+const FULL_H = 5.625;  // pptxgen default 16:9 height
 
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/** Fetch any same-origin (or proxied) URL and return a data: URL */
+/** fetch any same-origin URL (including our /api proxies) to a data URL */
 async function urlToDataUrl(url: string): Promise<string> {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`fetch failed: ${url}`);
@@ -19,40 +19,48 @@ async function urlToDataUrl(url: string): Promise<string> {
   });
 }
 
-/** Safely truncate long text (to keep it inside the text box) */
-function truncate(s: string | undefined, max = 600): string {
-  const t = (s ?? "").trim();
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
+/** lazy-load pdf.js and set worker (CDN worker keeps bundling simple) */
+async function ensurePdfJs() {
+  // legacy build keeps the classic API and works great with Vite
+  // Pin the worker version to avoid surprises
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.js");
+  if (!pdfjs.GlobalWorkerOptions.workerSrcSet) {
+    pdfjs.GlobalWorkerOptions.workerSrc =
+      "https://unpkg.com/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
+    // tiny flag so we don’t set it multiple times
+    (pdfjs.GlobalWorkerOptions as any).workerSrcSet = true;
+  }
+  return pdfjs;
 }
 
-/**
- * Render the **first page** of a PDF to a PNG data URL using pdfjs.
- * Works with URLs under /specs/* or any same-origin/ proxied URL (e.g. /api/pdf-proxy?...).
- */
-async function pdfFirstPageToDataUrl(pdfUrl: string): Promise<string | null> {
-  try {
-    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.js");
-    // Tell pdfjs where its worker script is (Vite-friendly)
-    const workerSrc = (await import("pdfjs-dist/legacy/build/pdf.worker.min.js?url")).default;
-    (pdfjs as any).GlobalWorkerOptions.workerSrc = workerSrc;
+/** render the first N pages of a PDF to data URLs (JPEG) */
+async function pdfToImages(pdfUrl: string, maxPages = 1): Promise<string[]> {
+  const pdfjs = await ensurePdfJs();
+  // The spec URL we pass in is already same-origin (/api/pdf-proxy?... or /specs/*.pdf)
+  const task = pdfjs.getDocument({ url: pdfUrl });
+  const doc = await task.promise;
 
-    const loadingTask = (pdfjs as any).getDocument(pdfUrl);
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1);
+  const pages = Math.min(doc.numPages, Math.max(1, maxPages));
+  const out: string[] = [];
 
-    // render at a nice scale for slides
-    const viewport = page.getViewport({ scale: 1.7 });
+  for (let i = 1; i <= pages; i++) {
+    const page = await doc.getPage(i);
+
+    // Render at decent resolution (scale ~1.6–2.0)
+    const viewport = page.getViewport({ scale: 1.8 });
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d")!;
     canvas.width = Math.ceil(viewport.width);
     canvas.height = Math.ceil(viewport.height);
+
     await page.render({ canvasContext: ctx, viewport }).promise;
 
-    return canvas.toDataURL("image/png");
-  } catch (e) {
-    console.warn("PDF render failed:", e);
-    return null; // graceful fallback – we’ll keep the PDF link if rendering fails
+    // JPEG is much smaller than PNG for pages
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+    out.push(dataUrl);
   }
+
+  return out;
 }
 
 type ExportArgs = {
@@ -78,7 +86,7 @@ export async function exportPptx({
   const pptx = new PptxGenJS();
 
   // ---------- COVERS ----------
-  // Slide 1: bathroom photo + project/client on top
+  // Slide 1: photo + project/client
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
@@ -88,19 +96,19 @@ export async function exportPptx({
       s1.addText(projectName, {
         x: 0.6, y: 0.6, w: 8.8, h: 1.0,
         fontSize: 32, bold: true, color: "FFFFFF",
-        shadow: { type: "outer", blur: 3, offset: 1, color: "000000" }
+        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" }
       });
       if (clientName) {
         s1.addText(`Client: ${clientName}`, {
           x: 0.6, y: 1.4, w: 8.8, h: 0.6,
           fontSize: 20, color: "FFFFFF",
-          shadow: { type: "outer", blur: 3, offset: 1, color: "000000" }
+          shadow: { type: "outer", blur: 2, offset: 1, color: "000000" }
         });
       }
     } catch {}
   }
 
-  // Slide 2: second bathroom photo + the rest (prepared by, email, phone, date)
+  // Slide 2: photo + prepared by / email / phone / date
   if (COVER_URLS[1]) {
     try {
       const s2 = pptx.addSlide();
@@ -113,103 +121,103 @@ export async function exportPptx({
       if (phone)       lines.push(`Phone: ${phone}`);
       if (date)        lines.push(`Date: ${date}`);
 
-      if (lines.length) {
-        s2.addText(lines.join("\n"), {
-          x: 0.6, y: 0.6, w: 8.8, h: 2.0,
-          fontSize: 20, color: "FFFFFF", lineSpacing: 20,
-          shadow: { type: "outer", blur: 3, offset: 1, color: "000000" }
-        });
-      }
+      s2.addText(lines.join("\n"), {
+        x: 0.6, y: 0.6, w: 8.8, h: 2.0,
+        fontSize: 20, color: "FFFFFF",
+        lineSpacing: 20,
+        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" }
+      });
     } catch {}
   }
 
   // ---------- PRODUCT SLIDES ----------
   for (const p of items) {
-    // --- Main product slide
     const s = pptx.addSlide();
 
-    // Left image (keep aspect, no cropping)
-    if (p.imageProxied) {
+    // Left image (non-cropping)
+    if (p.imageProxied || (p as any).imageUrl) {
       try {
-        const img = await urlToDataUrl(p.imageProxied);
+        const data = await urlToDataUrl(p.imageProxied || (p as any).imageUrl);
         s.addImage({
-          data: img,
-          x: 0.5, y: 0.7, w: 5.5, h: 4.1,
-          sizing: { type: "contain", w: 5.5, h: 4.1 }
+          data, x: 0.5, y: 0.7, w: 5.5, h: 4.1,
+          sizing: { type: "contain", w: 5.5, h: 4.1 }  // keep aspect, no stretch
         } as any);
       } catch {}
     }
 
-    // Right column text layout
-    s.addText(p.name || "—", { x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true });
+    // Right text block (desc + bullets). shrinkText prevents overflow.
+    const bullets =
+      (p.specsBullets ?? [])
+        .slice(0, 8)
+        .map((b) => `• ${b}`)
+        .join("\n");
 
+    const body = [p.description, bullets].filter(Boolean).join("\n\n");
+
+    s.addText(p.name || "—", {
+      x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true
+    });
     if (p.code) {
-      s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.3, w: 6.2, h: 0.38, fontSize: 12 });
-    }
-
-    // Description (truncate + shrink to fit)
-    if (p.description) {
-      s.addText(truncate(p.description, 550), {
-        x: 6.2, y: 1.75, w: 6.2, h: 1.35,
-        fontSize: 12, valign: "top", shrinkText: true
+      s.addText(`SKU: ${p.code}`, {
+        x: 6.2, y: 1.4, w: 6.2, h: 0.4, fontSize: 12
       });
     }
+    s.addText(body || "", {
+      x: 6.2, y: 1.9, w: 6.2, h: 3.7,
+      fontSize: 12,
+      valign: "top",
+      shrinkText: true,   // <— keep inside the box
+      lineSpacing: 12,
+    });
 
-    // Specification bullets (real bullets, shrink to fit)
-    if (p.specsBullets?.length) {
-      s.addText(p.specsBullets.slice(0, 12).map(x => x.trim()).filter(Boolean), {
-        x: 6.2, y: 3.2, w: 6.2, h: 1.9,
-        fontSize: 12, bullet: { type: "bullet" }, valign: "top", shrinkText: true
-      });
-    }
-
-    // Links
-    let y = 5.35;
+    let linkY = 5.8;
     if (p.url) {
       s.addText("Product page", {
-        x: 6.2, y, w: 6.2, h: 0.35, fontSize: 12, underline: true,
+        x: 6.2, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
         hyperlink: { url: p.url }
       });
-      y += 0.4;
+      linkY += 0.4;
     }
     if (p.pdfUrl) {
       s.addText("Spec sheet (PDF)", {
-        x: 6.2, y, w: 6.2, h: 0.35, fontSize: 12, underline: true,
+        x: 6.2, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true,
         hyperlink: { url: p.pdfUrl }
       });
     }
 
-    // Category note (left bottom)
+    // ---------- SPEC SHEET SLIDES (actual PDF -> images) ----------
+    if (p.pdfUrl) {
+      try {
+        // Render first 2 pages; change to 1 if you only want the first page.
+        const imgs = await pdfToImages(p.pdfUrl, 2);
+        for (let i = 0; i < imgs.length; i++) {
+          const spec = pptx.addSlide();
+          // Optional title
+          spec.addText(
+            `Spec Sheet — ${p.name || p.code || ""}${imgs.length > 1 ? ` (p.${i + 1})` : ""}`,
+            { x: 0.5, y: 0.3, w: 9, h: 0.4, fontSize: 14, bold: true }
+          );
+          // Full-bleed(ish) image with "contain" so it doesn’t distort
+          spec.addImage({
+            data: imgs[i],
+            x: 0.5, y: 0.8, w: 9.0, h: 4.3,
+            sizing: { type: "contain", w: 9.0, h: 4.3 }
+          } as any);
+        }
+      } catch {
+        // If rendering fails for some PDF, leave the link on the product slide
+        // (already added above) and continue.
+      }
+    }
+
     if (p.category) {
       s.addText(`Category: ${p.category}`, {
         x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666"
       });
     }
-
-    // --- Spec Sheet slide (image of PDF first page)
-    if (p.pdfUrl) {
-      const specImg = await pdfFirstPageToDataUrl(p.pdfUrl);
-      if (specImg) {
-        const spec = pptx.addSlide();
-        spec.addText(`${p.name || "—"} — Spec Sheet`, {
-          x: 0.5, y: 0.35, w: 9, h: 0.5, fontSize: 18, bold: true
-        });
-        // generous margins, keep aspect (no stretch)
-        spec.addImage({
-          data: specImg,
-          x: 0.5, y: 0.9, w: 9, h: 4.2,
-          sizing: { type: "contain", w: 9, h: 4.2 }
-        } as any);
-        spec.addText("Open full PDF", {
-          x: 0.5, y: 5.3, w: 9, h: 0.35, fontSize: 12, underline: true,
-          hyperlink: { url: p.pdfUrl }
-        });
-      }
-      // If rendering fails, we still keep the PDF hyperlink on the main slide.
-    }
   }
 
-  // ---------- BACK PAGES (warranty then service) ----------
+  // ---------- BACK PAGES ----------
   for (const url of BACK_URLS) {
     try {
       const data = await urlToDataUrl(url);
