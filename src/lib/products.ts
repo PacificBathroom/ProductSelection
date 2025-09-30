@@ -23,24 +23,20 @@ function parseBullets(raw?: string | string[]): string[] {
   if (!raw) return [];
   const s = Array.isArray(raw) ? raw.join("\n") : String(raw);
 
-  // Turn common inline bullet markers into newlines first
+  // normalize common bullet separators to newlines
   const normalized = s
-    // “• spec … • next …”
-    .replace(/[\u2022•]\s*/g, "\n")
-    // leading hyphen bullets like "- spec" or "– spec" or "— spec"
-    .replace(/(?:^|\s)[\-–—]\s+/g, "\n")
-    // collapse multiple newlines
+    .replace(/[\u2022•]\s*/g, "\n")    // "• spec • next" -> newline separated
+    .replace(/(?:^|\s)[\-–—]\s+/g, "\n") // "- spec" / "– spec" / "— spec"
     .replace(/\r/g, "")
     .replace(/\n{2,}/g, "\n")
     .trim();
 
   return normalized
-    .split(/\n|[|;]+/g)                         // newline, pipe, or semicolon
-    .map(x => x.replace(/^[\u2022•\-–—\s]+/, "")) // trim any leading bullet chars
+    .split(/\n|[|;]+/g)                        // newline / pipe / semicolon
+    .map(x => x.replace(/^[\u2022•\-–—\s]+/, "")) // strip bullet glyphs
     .map(x => x.trim())
     .filter(Boolean);
 }
-
 
 const proxied = (url?: string | null) =>
   url
@@ -60,8 +56,6 @@ const proxiedPdf = (url?: string | null) =>
 function normalizeRow(r: Row): Product {
   const url = String(r.Url || "").trim();
   let name = String(r.Name || "").trim();
-
-  // If "Name" cell is empty or actually a URL, derive a friendly title from Url
   if (!name || /^https?:\/\//i.test(name)) name = url ? nameFromUrl(url) : name || "—";
 
   // Prefer explicit PdfURL; otherwise allow PdfKey => /specs/<key>.pdf
@@ -69,7 +63,6 @@ function normalizeRow(r: Row): Product {
     String(r.PdfURL || "").trim() ||
     (r.PdfKey ? `/specs/${String(r.PdfKey).trim()}.pdf` : "");
 
-  // Image URL may be "ImageURL" (your sheet) or "Image"
   const img = String(r.ImageURL || r.Image || "").trim();
 
   return {
@@ -96,7 +89,6 @@ export async function fetchProducts(range: string): Promise<Product[]> {
   else if (Array.isArray(payload?.rows)) rows = payload.rows as Row[];
   else if (Array.isArray(payload?.data)) rows = payload.data as Row[];
   else if (Array.isArray(payload?.values)) {
-    // Google Sheets values(2D array) -> objects using header row
     const [hdr = [], ...vals] = payload.values as any[][];
     rows = vals.map((arr) =>
       Object.fromEntries(hdr.map((h: string, i: number) => [h, arr[i]]))
