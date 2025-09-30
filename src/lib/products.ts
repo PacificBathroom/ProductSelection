@@ -1,4 +1,3 @@
-// src/lib/products.ts
 import type { Product } from "../types";
 
 type Row = Record<string, any>;
@@ -8,48 +7,49 @@ function nameFromUrl(u: string): string {
   try {
     const path = decodeURIComponent(new URL(u, "https://x.example").pathname);
     const last = path.split("/").filter(Boolean).pop() || "";
-    return last.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim()
-               .replace(/\b\w/g, (m) => m.toUpperCase());
-  } catch { return u || "—"; }
+    return last
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (m) => m.toUpperCase());
+  } catch {
+    return u || "—";
+  }
 }
 
-/** parse SpecsBullets from string (pipes/newlines/•/hyphen bullets) or array */
+/** parse SpecsBullets from string (pipes/newlines/•/hyphens) or array */
 function parseBullets(raw?: string | string[]): string[] {
   if (!raw) return [];
   const s = Array.isArray(raw) ? raw.join("\n") : String(raw);
-
   const normalized = s
-    .replace(/[\u2022•]\s*/g, "\n")      // "• " -> newline
-    .replace(/(?:^|\s)[\-–—]\s+/g, "\n") // "- " -> newline
+    .replace(/[\u2022•]\s*/g, "\n")         // "• " -> newline
+    .replace(/(?:^|\s)[\-–—]\s+/g, "\n")    // "- " -> newline
     .replace(/\r/g, "")
     .replace(/\n{2,}/g, "\n")
     .trim();
 
   return normalized
     .split(/\n|[|;]+/g)
-    .map(x => x.replace(/^[\u2022•\-–—\s]+/, "").trim())
+    .map((x) => x.replace(/^[\u2022•\-–—\s]+/, "").trim())
     .filter(Boolean);
 }
 
 const proxied = (url?: string | null) =>
-  url ? (/^\/(specs|branding)\//.test(url) ? url
-       : `/api/file-proxy?url=${encodeURIComponent(url)}`) : undefined;
+  url
+    ? /^\/(specs|branding)\//.test(url)
+      ? url
+      : `/api/file-proxy?url=${encodeURIComponent(url)}`
+    : undefined;
 
-const proxiedPdf = (url?: string | null, key?: string | null) => {
-  const explicit = (url || "").trim();
-  if (explicit) {
-    // Prefer /specs/...pdf if already local
-    if (explicit.startsWith("/specs/")) return explicit;
-    // Otherwise proxy external PDFs
-    return `/api/pdf-proxy?url=${encodeURIComponent(explicit)}`;
-  }
-  const k = (key || "").trim();
-  return k ? `/specs/${k}.pdf` : undefined;
-};
+const proxiedPdf = (url?: string | null) =>
+  url
+    ? url.startsWith("/specs/")
+      ? url
+      : `/api/pdf-proxy?url=${encodeURIComponent(url)}`
+    : undefined;
 
-// …existing imports / helpers…
-
-function normalizeRow(r: Record<string, any>): Product {
+/** one row -> Product */
+function normalizeRow(r: Row): Product {
   const url = String(r.Url || "").trim();
   let name = String(r.Name || "").trim();
   if (!name || /^https?:\/\//i.test(name)) name = url ? nameFromUrl(url) : name || "—";
@@ -65,15 +65,15 @@ function normalizeRow(r: Record<string, any>): Product {
     code: String(r.Code || "").trim(),
     name,
     url: url || undefined,
+    imageUrl: img || undefined,
     imageProxied: proxied(img),
     description: String(r.Description || "").trim(),
     specsBullets: parseBullets(r.SpecsBullets),
     pdfUrl: proxiedPdf(pdfUrl),
-    pdfKey,                          // NEW
+    pdfKey,
     category: String(r.Category || "").trim(),
   };
 }
-
 
 /** Robustly read either an array or { rows: [...] } or { values: [...] } */
 export async function fetchProducts(range: string): Promise<Product[]> {
@@ -87,7 +87,6 @@ export async function fetchProducts(range: string): Promise<Product[]> {
   else if (Array.isArray(payload?.rows)) rows = payload.rows as Row[];
   else if (Array.isArray(payload?.data)) rows = payload.data as Row[];
   else if (Array.isArray(payload?.values)) {
-    // Google Sheets "values" (2D array) -> objects using header row
     const [hdr = [], ...vals] = payload.values as any[][];
     rows = vals.map((arr) =>
       Object.fromEntries(hdr.map((h: string, i: number) => [h, arr[i]]))
