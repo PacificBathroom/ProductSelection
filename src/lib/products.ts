@@ -47,13 +47,17 @@ const proxiedPdf = (url?: string | null, key?: string | null) => {
   return k ? `/specs/${k}.pdf` : undefined;
 };
 
-/** turn one sheets row into our Product shape */
-function normalizeRow(r: Row): Product {
+// …existing imports / helpers…
+
+function normalizeRow(r: Record<string, any>): Product {
   const url = String(r.Url || "").trim();
   let name = String(r.Name || "").trim();
   if (!name || /^https?:\/\//i.test(name)) name = url ? nameFromUrl(url) : name || "—";
 
-  const pdfUrl = proxiedPdf(String(r.PdfURL || ""), String(r.PdfKey || ""));
+  const pdfKey = String(r.PdfKey || "").trim();
+  const pdfUrl =
+    String(r.PdfURL || "").trim() ||
+    (pdfKey ? `/specs/${pdfKey}.pdf` : "");
 
   const img = String(r.ImageURL || r.Image || "").trim();
 
@@ -61,14 +65,15 @@ function normalizeRow(r: Row): Product {
     code: String(r.Code || "").trim(),
     name,
     url: url || undefined,
-    imageUrl: img || undefined,
     imageProxied: proxied(img),
     description: String(r.Description || "").trim(),
     specsBullets: parseBullets(r.SpecsBullets),
-    pdfUrl: pdfUrl,
+    pdfUrl: proxiedPdf(pdfUrl),
+    pdfKey,                          // NEW
     category: String(r.Category || "").trim(),
   };
 }
+
 
 /** Robustly read either an array or { rows: [...] } or { values: [...] } */
 export async function fetchProducts(range: string): Promise<Product[]> {
