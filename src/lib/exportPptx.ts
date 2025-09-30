@@ -1,27 +1,45 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-const FULL_W = 10;     // pptxgen 16:9 width (in)
-const FULL_H = 5.625;  // pptxgen 16:9 height
+const FULL_W = 10;     // pptxgen default 16:9 width (in)
+const FULL_H = 5.625;  // pptxgen default 16:9 height
 
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------------- helpers ---------------- */
 
-// Same-origin (or proxied) URL -> data URL
-async function urlToDataUrl(url: string): Promise<string> {
+// Fetch any image URL (including /api/file-proxy?url=...) and return a PNG data URL.
+// We always convert to PNG so Office renders it reliably (WebP/JPG become PNG).
+async function urlToPngDataUrl(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${url}`);
   const blob = await res.blob();
-  return await new Promise<string>((resolve) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.readAsDataURL(blob);
+
+  // Read to data URL first (same-origin because of the proxy).
+  const bufUrl: string = await new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result));
+    fr.readAsDataURL(blob);
   });
+
+  // Draw on canvas and export as PNG.
+  const img = new Image();
+  img.src = bufUrl;
+  await new Promise<void>((ok, err) => {
+    img.onload = () => ok();
+    img.onerror = () => err(new Error("image load error"));
+  });
+
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth || img.width;
+  c.height = img.naturalHeight || img.height;
+  const ctx = c.getContext("2d")!;
+  ctx.drawImage(img, 0, 0);
+  return c.toDataURL("image/png");
 }
 
-// Read pixel dims from data URL
+// Natural dimensions from a data URL
 async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> {
   const img = new Image();
   img.src = dataUrl;
@@ -32,147 +50,65 @@ async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> 
   return { w: img.naturalWidth, h: img.naturalHeight };
 }
 
-// Trim near-white borders off an image (so spec pages fill space nicely)
-async function trimWhite(dataUrl: string, threshold = 245): Promise<string> {
-  const img = new Image();
-  img.src = dataUrl;
-  await new Promise<void>((ok, err) => {
-    img.onload = () => ok();
-    img.onerror = () => err(new Error("image load error"));
-  });
-
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
-
-  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-  let top = 0, left = 0, right = width - 1, bottom = height - 1;
-
-  const isWhite = (i: number) => {
-    const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-    // treat fully transparent as white; treat near-white as white
-    return a < 8 || (r >= threshold && g >= threshold && b >= threshold);
-  };
-
-  // scan from each edge until we hit a non-white pixel
-  outerTop:
-  for (; top < height; top++) {
-    for (let x = 0; x < width; x++) {
-      const i = (top * width + x) * 4;
-      if (!isWhite(i)) break outerTop;
-    }
-  }
-  outerBottom:
-  for (; bottom >= top; bottom--) {
-    for (let x = 0; x < width; x++) {
-      const i = (bottom * width + x) * 4;
-      if (!isWhite(i)) break outerBottom;
-    }
-  }
-  outerLeft:
-  for (; left < width; left++) {
-    for (let y = top; y <= bottom; y++) {
-      const i = (y * width + left) * 4;
-      if (!isWhite(i)) break outerLeft;
-    }
-  }
-  outerRight:
-  for (; right >= left; right--) {
-    for (let y = top; y <= bottom; y++) {
-      const i = (y * width + right) * 4;
-      if (!isWhite(i)) break outerRight;
-    }
-  }
-
-  const w = Math.max(1, right - left + 1);
-  const h = Math.max(1, bottom - top + 1);
-
-  // if we trimmed almost nothing, just return original
-  if (w < width * 0.98 && h < height * 0.98) {
-    const out = document.createElement("canvas");
-    out.width = w; out.height = h;
-    const octx = out.getContext("2d")!;
-    octx.drawImage(canvas, left, top, w, h, 0, 0, w, h);
-    return out.toDataURL(); // PNG
-  }
-  return dataUrl;
-}
-
-// compute contain rect inside a box (ppt inches)
-function containRect(
+// Fit into a box while preserving aspect ratio; return centered rect
+function fitIntoBox(
   imgW: number, imgH: number,
   boxX: number, boxY: number, boxW: number, boxH: number
-) {
+): { x: number; y: number; w: number; h: number } {
   const rImg = imgW / imgH;
   const rBox = boxW / boxH;
   let w: number, h: number;
-  if (rImg >= rBox) { w = boxW; h = w / rImg; }
-  else { h = boxH; w = h * rImg; }
+  if (rImg >= rBox) { w = boxW; h = w / rImg; } else { h = boxH; w = h * rImg; }
   const x = boxX + (boxW - w) / 2;
   const y = boxY + (boxH - h) / 2;
   return { x, y, w, h };
 }
 
-// add contained image (optionally trim white first)
-async function addImageContained(
+// Add a centered, non-cropped image into a box
+async function addContainedImage(
   slide: any,
   dataUrl: string,
-  box: { x: number; y: number; w: number; h: number },
-  opts?: { trim?: boolean }
+  box: { x: number; y: number; w: number; h: number }
 ) {
-  const data = opts?.trim ? await trimWhite(dataUrl) : dataUrl;
-  const { w: iw, h: ih } = await getImageDims(data);
-  const rect = containRect(iw, ih, box.x, box.y, box.w, box.h);
-  slide.addImage({ data, ...rect } as any);
+  const { w: iw, h: ih } = await getImageDims(dataUrl);
+  const rect = fitIntoBox(iw, ih, box.x, box.y, box.w, box.h);
+  slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// Try to derive one or more preview image URLs from a PDF URL
-function candidatePreviewsFromPdfUrl(pdfUrl?: string): string[] {
-  if (!pdfUrl) return [];
+// Build a list of candidate preview image paths we’ll try in order.
+// We accept: /specs/<basename>.(png|jpg|jpeg|webp)
+// Sources for <basename>: (1) product code, (2) pdf basename, (3) decoded ?url=… basename.
+function buildSpecPreviewCandidates(p: Product): string[] {
+  const addAll = (base: string, set: Set<string>) => {
+    if (!base) return;
+    ["png", "jpg", "jpeg", "webp"].forEach(ext => set.add(`/specs/${base}.${ext}`));
+  };
 
-  const tryNames = (base: string) =>
-    [".png", ".jpg", ".jpeg", ".webp"].map(ext => `/specs/${base}${ext}`);
+  const out = new Set<string>();
 
-  // /specs/NAME.pdf
-  if (pdfUrl.startsWith("/specs/")) {
-    const base = pdfUrl.split("/").pop()!.replace(/\.pdf(\?.*)?$/i, "");
-    return tryNames(base);
-  }
+  // #1. Product code (handles PMB420 etc.)
+  if (p.code) addAll(String(p.code).trim(), out);
 
-  // /api/pdf-proxy?url=.../NAME.pdf
-  const m = pdfUrl.match(/[?&]url=([^&]+)/);
-  if (m) {
+  // #2. From pdfUrl
+  const pdf = p.pdfUrl || "";
+  if (pdf.startsWith("/specs/")) {
+    const base = pdf.split("/").pop()!.replace(/\.pdf(\?.*)?$/i, "");
+    addAll(base, out);
+  } else if (/\burl=/.test(pdf)) {
     try {
-      const decoded = decodeURIComponent(m[1]);
-      const base = decoded.split("/").pop()!.replace(/\.pdf(\?.*)?$/i, "");
-      return tryNames(base);
+      const decoded = decodeURIComponent(pdf.replace(/^.*\burl=/, "").split("&")[0]);
+      const base = (decoded.split("/").pop() || "").replace(/\.pdf(\?.*)?$/i, "");
+      addAll(base, out);
     } catch { /* ignore */ }
+  } else if (/^https?:\/\//i.test(pdf)) {
+    const base = (pdf.split("/").pop() || "").replace(/\.pdf(\?.*)?$/i, "");
+    addAll(base, out);
   }
 
-  // raw https url
-  if (/^https?:\/\//i.test(pdfUrl)) {
-    const base = pdfUrl.split("/").pop()!.replace(/\.pdf(\?.*)?$/i, "");
-    return tryNames(base);
-  }
-
-  return [];
+  return Array.from(out);
 }
 
-// fetch first preview that exists -> dataURL
-async function firstPreviewData(previews: string[]): Promise<string | null> {
-  for (const u of previews) {
-    try {
-      const d = await urlToDataUrl(u);
-      return d;
-    } catch { /* keep trying */ }
-  }
-  return null;
-}
-
-/* ---------------- main export ---------------- */
+/* ---------------- main ---------------- */
 
 type ExportArgs = {
   projectName?: string;
@@ -196,11 +132,13 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // ---- cover 1
+  /* ---------- COVERS ---------- */
+
+  // Slide 1
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
-      const bg = await urlToDataUrl(COVER_URLS[0]);
+      const bg = await urlToPngDataUrl(COVER_URLS[0]);
       s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
       s1.addText(projectName, {
         x: 0.6, y: 0.6, w: 8.8, h: 1.0,
@@ -217,11 +155,11 @@ export async function exportPptx({
     } catch {}
   }
 
-  // ---- cover 2
+  // Slide 2
   if (COVER_URLS[1]) {
     try {
       const s2 = pptx.addSlide();
-      const bg = await urlToDataUrl(COVER_URLS[1]);
+      const bg = await urlToPngDataUrl(COVER_URLS[1]);
       s2.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
 
       const lines: string[] = [];
@@ -238,72 +176,71 @@ export async function exportPptx({
     } catch {}
   }
 
-  // ---- product + spec slides
+  /* ---------- PRODUCT + SPEC SLIDES ---------- */
+
   for (const p of items) {
-    // PRODUCT slide
+    // ---- Product slide
     const s = pptx.addSlide();
 
-    // photo (left)
-    const photoUrl = p.imageProxied || p.imageUrl;
-    if (photoUrl) {
+    // Layout: image left, text right (keeps within slide width)
+    if (p.imageProxied) {
       try {
-        const imgData = await urlToDataUrl(photoUrl);
-        await addImageContained(s, imgData, { x: 0.5, y: 1.2, w: 5.7, h: 3.9 }, { trim: false });
+        const imgData = await urlToPngDataUrl(p.imageProxied);
+        await addContainedImage(s, imgData, { x: 0.6, y: 1.1, w: 5.8, h: 3.9 });
       } catch {}
     }
 
-    // right copy
-    s.addText(p.name || "—", { x: 6.5, y: 0.8, w: 3.0, h: 0.7, fontSize: 30, bold: true, valign: "top" });
-    if (p.code) s.addText(`SKU: ${p.code}`, { x: 6.5, y: 1.55, w: 3.8, h: 0.35, fontSize: 12 });
+    // Title + SKU
+    s.addText(p.name || "—", { x: 6.8, y: 0.7, w: 2.6, h: 0.8, fontSize: 28, bold: true });
+    if (p.code) s.addText(`SKU: ${p.code}`, { x: 6.8, y: 1.5, w: 2.6, h: 0.35, fontSize: 12 });
 
-    const bullets =
-      (p.specsBullets ?? [])
-        .slice(0, 8)
-        .map((b) => `• ${b}`)
-        .join("\n");
+    // Description + (first few) bullets
+    const bullets = (p.specsBullets ?? []).slice(0, 6).map(b => `• ${b}`).join("\n");
+    const body = [p.description || "", bullets].filter(Boolean).join("\n\n");
 
-    const bodyText = [p.description, bullets].filter(Boolean).join("\n\n");
-
-    s.addText(bodyText, {
-      x: 6.5, y: 2.0, w: 3.8, h: 3.0,
-      fontSize: 16, valign: "top",
-      lineSpacing: 22,
-      shrinkText: true,
+    s.addText(body, {
+      x: 6.8, y: 1.95, w: 2.6, h: 3.2,
+      fontSize: 12, valign: "top", lineSpacing: 16, shrinkText: true,
     });
 
-    // accent bar (optional)
-    s.addShape(pptx.ShapeType.rect, { x: 0, y: FULL_H - 0.25, w: FULL_W, h: 0.25, fill: { color: "1f3b82" }, line: { color: "1f3b82" } });
-
-    // SPEC slide (separate page)
-    if (p.pdfUrl) {
+    // ---- Spec slide (if there is a PDF URL or we can still match by code)
+    const specSlideNeeded = !!(p.pdfUrl || p.code);
+    if (specSlideNeeded) {
       const s2 = pptx.addSlide();
       s2.addText(`${p.name || "—"} — Specifications`, {
-        x: 0.6, y: 0.5, w: 8.8, h: 0.7, fontSize: 36, bold: true,
+        x: 0.6, y: 0.45, w: 8.8, h: 0.7, fontSize: 30, bold: true,
       });
 
-      const previews = candidatePreviewsFromPdfUrl(p.pdfUrl);
-      const data = await firstPreviewData(previews);
-
-      if (data) {
-        // Trim borders so technical drawings fill space consistently
-        await addImageContained(
-          s2,
-          await trimWhite(data),
-          { x: 0.4, y: 1.2, w: 9.2, h: 3.9 },
-          { trim: false }
-        );
-      } else {
-        s2.addText("Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs.)", {
-          x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 16, color: "888888"
-        });
+      // Try multiple candidate image names
+      const candidates = buildSpecPreviewCandidates(p);
+      let added = false;
+      for (const c of candidates) {
+        try {
+          const img = await urlToPngDataUrl(c);
+          // Large box that fills most of the slide
+          await addContainedImage(s2, img, { x: 0.25, y: 0.95, w: 9.5, h: 4.25 });
+          added = true;
+          break;
+        } catch { /* try next */ }
       }
+
+      if (!added) {
+        s2.addText(
+          "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, " +
+          "e.g. PMB420.png).",
+          { x: 0.6, y: 1.8, w: 8.8, h: 1.0, fontSize: 18, color: "888888" }
+        );
+      }
+
+      // No links or extra footer per your request
     }
   }
 
-  // ---- back pages
+  /* ---------- BACK PAGES ---------- */
+
   for (const url of BACK_URLS) {
     try {
-      const data = await urlToDataUrl(url);
+      const data = await urlToPngDataUrl(url);
       const s = pptx.addSlide();
       s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
     } catch {}
