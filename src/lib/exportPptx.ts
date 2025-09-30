@@ -1,45 +1,28 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-const FULL_W = 10;     // pptxgen default 16:9 width (in)
-const FULL_H = 5.625;  // pptxgen default 16:9 height
+const FULL_W = 10;     // pptxgen 16:9 width (in)
+const FULL_H = 5.625;  // pptxgen 16:9 height (in)
 
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/* ---------------- helpers ---------------- */
+/* ---------- helpers ---------- */
 
-// Fetch any image URL (including /api/file-proxy?url=...) and return a PNG data URL.
-// We always convert to PNG so Office renders it reliably (WebP/JPG become PNG).
-async function urlToPngDataUrl(url: string): Promise<string> {
+// Same-origin or proxied URL -> data URL
+async function urlToDataUrl(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${url}`);
   const blob = await res.blob();
-
-  // Read to data URL first (same-origin because of the proxy).
-  const bufUrl: string = await new Promise((resolve) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result));
-    fr.readAsDataURL(blob);
+  return await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error("FileReader error"));
+    r.onload = () => resolve(String(r.result));
+    r.readAsDataURL(blob);
   });
-
-  // Draw on canvas and export as PNG.
-  const img = new Image();
-  img.src = bufUrl;
-  await new Promise<void>((ok, err) => {
-    img.onload = () => ok();
-    img.onerror = () => err(new Error("image load error"));
-  });
-
-  const c = document.createElement("canvas");
-  c.width = img.naturalWidth || img.width;
-  c.height = img.naturalHeight || img.height;
-  const ctx = c.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
-  return c.toDataURL("image/png");
 }
 
-// Natural dimensions from a data URL
+// Read natural (pixel) dimensions from a data URL
 async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> {
   const img = new Image();
   img.src = dataUrl;
@@ -50,11 +33,11 @@ async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> 
   return { w: img.naturalWidth, h: img.naturalHeight };
 }
 
-// Fit into a box while preserving aspect ratio (unchanged)
+// Fit into a box while preserving aspect ratio; return centered rect
 function fitIntoBox(
   imgW: number, imgH: number,
   boxX: number, boxY: number, boxW: number, boxH: number
-) {
+): { x: number; y: number; w: number; h: number } {
   const rImg = imgW / imgH;
   const rBox = boxW / boxH;
   let w: number, h: number;
@@ -65,6 +48,7 @@ function fitIntoBox(
   return { x, y, w, h };
 }
 
+// Add a centered, non-cropped image into a box
 async function addContainedImage(
   slide: any,
   dataUrl: string,
@@ -75,7 +59,7 @@ async function addContainedImage(
   slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// derive a likely /specs/NAME.ext from a pdf url
+// From a pdf url, guess basename (without extension)
 function guessSpecBaseFromPdf(pdfUrl?: string): string | undefined {
   if (!pdfUrl) return;
   if (pdfUrl.startsWith("/specs/")) {
@@ -83,21 +67,24 @@ function guessSpecBaseFromPdf(pdfUrl?: string): string | undefined {
     return base.replace(/\.pdf(\?.*)?$/i, "");
   }
   const m = pdfUrl.match(/[?&]url=([^&]+)/);
-  if (m) try {
-    const decoded = decodeURIComponent(m[1]);
-    const base = decoded.split("/").pop() || "";
-    return base.replace(/\.pdf(\?.*)?$/i, "");
-  } catch {}
+  if (m) {
+    try {
+      const decoded = decodeURIComponent(m[1]);
+      const base = decoded.split("/").pop() || "";
+      return base.replace(/\.pdf(\?.*)?$/i, "");
+    } catch { /* ignore */ }
+  }
   if (/^https?:\/\//i.test(pdfUrl)) {
     const base = pdfUrl.split("/").pop() || "";
     return base.replace(/\.pdf(\?.*)?$/i, "");
   }
+  return;
 }
 
-// try multiple image extensions (png / jpg / jpeg / webp)
-async function findSpecPreviewUrl(pdfUrl?: string, code?: string) {
-  const key = guessSpecBaseFromPdf(pdfUrl) || code;
-  if (!key) return undefined;
+// Try multiple extensions and name variants to find a preview next to the PDF
+async function findSpecPreviewUrl(pdfUrl?: string, sku?: string): Promise<string | undefined> {
+  const key = guessSpecBaseFromPdf(pdfUrl) || sku;
+  if (!key) return;
   const stems = [key, key.replace(/\s+/g, "_"), key.replace(/\s+/g, "")];
   const exts = ["png", "jpg", "jpeg", "webp"];
   for (const stem of stems) {
@@ -106,13 +93,10 @@ async function findSpecPreviewUrl(pdfUrl?: string, code?: string) {
       try { await urlToDataUrl(url); return url; } catch {}
     }
   }
-  return undefined;
+  return;
 }
 
-
-
-
-/* ---------------- main ---------------- */
+/* ---------- main ---------- */
 
 type ExportArgs = {
   projectName?: string;
@@ -142,7 +126,7 @@ export async function exportPptx({
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
-      const bg = await urlToPngDataUrl(COVER_URLS[0]);
+      const bg = await urlToDataUrl(COVER_URLS[0]);
       s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
       s1.addText(projectName, {
         x: 0.6, y: 0.6, w: 8.8, h: 1.0,
@@ -163,7 +147,7 @@ export async function exportPptx({
   if (COVER_URLS[1]) {
     try {
       const s2 = pptx.addSlide();
-      const bg = await urlToPngDataUrl(COVER_URLS[1]);
+      const bg = await urlToDataUrl(COVER_URLS[1]);
       s2.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
 
       const lines: string[] = [];
@@ -181,105 +165,73 @@ export async function exportPptx({
   }
 
   /* ---------- PRODUCT + SPEC SLIDES ---------- */
-// ---- Product slide
-{
-  const s = pptx.addSlide();
 
-  // big product image on the left
-  if (p.imageProxied) {
-    try {
-      const imgData = await urlToDataUrl(p.imageProxied);
-      await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
-    } catch {}
-  }
+  for (const p of items) {
+    // ---- Product slide
+    {
+      const s = pptx.addSlide();
 
-  // title on the right
-  s.addText(p.name || "—", {
-    x: 6.3, y: 0.7, w: 3.4, h: 0.9, fontSize: 30, bold: true
-  });
-
-  // body/spec bullets on the right
-  const bullets =
-    (p.specsBullets ?? []).slice(0, 8).map((b) => `• ${b}`).join("\n");
-  const body = [p.description, bullets].filter(Boolean).join("\n\n");
-  s.addText(body, {
-    x: 6.3, y: 1.8, w: 3.7, h: 3.2, fontSize: 14, lineSpacing: 18, valign: "top", shrinkText: true,
-  });
-
-  // SKU in bottom-right, small and out of the way
-  if (p.code) {
-    s.addText(p.code, {
-      x: 8.9, y: 5.25, w: 1.0, h: 0.3, fontSize: 12, color: "666666", align: "right"
-    });
-  }
-}
-
-
-    s.addText(body, {
-      x: 6.8, y: 1.95, w: 2.6, h: 3.2,
-      fontSize: 12, valign: "top", lineSpacing: 16, shrinkText: true,
-    });
-
-    // ---- Spec slide (if there is a PDF URL or we can still match by code)
-   // ---- Spec slide (one page, large preview)
-if (p.pdfUrl) {
-  const s2 = pptx.addSlide();
-
-  s2.addText(`${p.name || "—"} — Specifications`, {
-    x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true
-  });
-
-  // try to locate a preview next to the pdf (png/jpg/jpeg/webp), allow small name variations
-  let added = false;
-  try {
-    const previewUrl = await findSpecPreviewUrl(p.pdfUrl, p.code);
-    if (previewUrl) {
-      const data = await urlToDataUrl(previewUrl);
-      // BIG box, nearly full page
-      await addContainedImage(s2, data, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
-      added = true;
-    }
-  } catch {}
-
-  if (!added) {
-    s2.addText(
-      "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, e.g. PMB420.png).",
-      { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
-    );
-  }
-}
-
-
-      // Try multiple candidate image names
-      const candidates = buildSpecPreviewCandidates(p);
-      let added = false;
-      for (const c of candidates) {
+      // Large product image on the left
+      if (p.imageProxied) {
         try {
-          const img = await urlToPngDataUrl(c);
-          // Large box that fills most of the slide
-          await addContainedImage(s2, img, { x: 0.25, y: 0.95, w: 9.5, h: 4.25 });
-          added = true;
-          break;
-        } catch { /* try next */ }
+          const imgData = await urlToDataUrl(p.imageProxied);
+          await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
+        } catch {}
       }
 
-      if (!added) {
+      // Title on the right
+      s.addText(p.name || "—", {
+        x: 6.3, y: 0.7, w: 3.9, h: 0.9, fontSize: 30, bold: true,
+      });
+
+      // Body + bullets on the right
+      const bullets =
+        (p.specsBullets ?? []).slice(0, 8).map((b) => `• ${b}`).join("\n");
+      const body = [p.description, bullets].filter(Boolean).join("\n\n");
+      s.addText(body, {
+        x: 6.3, y: 1.8, w: 3.9, h: 3.2,
+        fontSize: 14, lineSpacing: 18, valign: "top", shrinkText: true,
+      });
+
+      // SKU bottom-right so it never collides with the copy
+      if (p.code) {
+        s.addText(p.code, {
+          x: 8.9, y: 5.25, w: 1.0, h: 0.3, fontSize: 12, color: "666666", align: "right",
+        });
+      }
+    }
+
+    // ---- Spec slide (always try when we have a PDF URL)
+    if (p.pdfUrl) {
+      const s2 = pptx.addSlide();
+      s2.addText(`${p.name || "—"} — Specifications`, {
+        x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
+      });
+
+      let addedImage = false;
+      try {
+        const previewUrl = await findSpecPreviewUrl(p.pdfUrl, p.code);
+        if (previewUrl) {
+          const prevData = await urlToDataUrl(previewUrl);
+          // Large centered box
+          await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
+          addedImage = true;
+        }
+      } catch {}
+
+      if (!addedImage) {
         s2.addText(
-          "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, " +
-          "e.g. PMB420.png).",
-          { x: 0.6, y: 1.8, w: 8.8, h: 1.0, fontSize: 18, color: "888888" }
+          "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, e.g. PMB420.png).",
+          { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
         );
       }
-
-      // No links or extra footer per your request
     }
   }
 
   /* ---------- BACK PAGES ---------- */
-
   for (const url of BACK_URLS) {
     try {
-      const data = await urlToPngDataUrl(url);
+      const data = await urlToDataUrl(url);
       const s = pptx.addSlide();
       s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
     } catch {}
