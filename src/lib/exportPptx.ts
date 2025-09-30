@@ -1,19 +1,16 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-const FULL_W = 10;      // 16:9 width in inches
-const FULL_H = 5.625;   // 16:9 height in inches
+const FULL_W = 10;      // 16:9 default width (inches)
+const FULL_H = 5.625;   // 16:9 default height (inches)
 
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/** Switch here: 'one' = everything on 1 slide, 'two' = separate PDF slide */
-const LAYOUT: "one" | "two" = "one";
-
-/** Fetch URL (same-origin or proxied) -> data URL */
+/** fetch any same-origin URL (incl. /api/file-proxy?url=...) to a data URL */
 async function urlToDataUrl(url: string): Promise<string> {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`fetch failed: ${url} (${res.status})`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`fetch failed: ${url}`);
   const blob = await res.blob();
   return await new Promise<string>((resolve) => {
     const r = new FileReader();
@@ -22,36 +19,34 @@ async function urlToDataUrl(url: string): Promise<string> {
   });
 }
 
-/** Ensure pdf.js is loaded (UMD from CDN), return window.pdfjsLib */
+/** lazy-load pdf.js from CDN at runtime (avoids Vite/TS bundling issues) */
+let pdfjsLibCached: any | null = null;
 async function ensurePdfJs(): Promise<any> {
-  const w = window as any;
-  if (w.pdfjsLib) return w.pdfjsLib;
-
-  await new Promise<void>((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error("Failed to load pdf.js"));
-    document.head.appendChild(s);
-  });
-
-  const lib = (window as any).pdfjsLib;
-  if (!lib) throw new Error("pdfjsLib not available after load");
-  // No worker to avoid cross-origin/packager issues
-  try { lib.GlobalWorkerOptions.workerSrc = null; } catch {}
+  if (pdfjsLibCached) return pdfjsLibCached;
+  // Use variable + @vite-ignore so the bundler doesn’t try to resolve it
+  const PDFJS_URL: any =
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.mjs";
+  // @ts-ignore – dynamic remote import lacks types
+  const lib = await import(/* @vite-ignore */ PDFJS_URL);
+  // Point the worker to the CDN build
+  lib.GlobalWorkerOptions.workerSrc =
+    "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+  pdfjsLibCached = lib;
   return lib;
 }
 
-/** Render first page of a PDF to a PNG data URL */
-async function pdfFirstPageToPngDataUrl(url: string): Promise<string | null> {
+/** render first page of a PDF URL to a PNG data URL (or return null on failure) */
+async function pdfFirstPageToDataUrl(pdfUrl: string): Promise<string | null> {
   try {
+    const res = await fetch(pdfUrl);
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
     const pdfjs = await ensurePdfJs();
-    const task = pdfjs.getDocument({ url, disableWorker: true });
-    const pdf = await task.promise;
-    const page = await pdf.getPage(1);
+    const doc = await pdfjs.getDocument({ data: buf }).promise;
+    const page = await doc.getPage(1);
 
-    const viewport = page.getViewport({ scale: 2 }); // 2x for clarity
+    // Render at a decent resolution
+    const viewport = page.getViewport({ scale: 2.0 });
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d")!;
     canvas.width = Math.ceil(viewport.width);
@@ -60,7 +55,7 @@ async function pdfFirstPageToPngDataUrl(url: string): Promise<string | null> {
 
     return canvas.toDataURL("image/png");
   } catch (e) {
-    console.warn("pdf render failed:", e);
+    console.warn("pdf->image failed", e);
     return null;
   }
 }
@@ -87,216 +82,137 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // ---------- COVER 1 ----------
-  try {
+  // --------- COVERS ---------
+  // Slide 1: photo + project/client
+  if (COVER_URLS[0]) {
+    try {
+      const s1 = pptx.addSlide();
+      const img = await urlToDataUrl(COVER_URLS[0]);
+      s1.addImage({ data: img, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+      s1.addText(projectName, {
+        x: 0.6, y: 0.6, w: 8.8, h: 1.0, fontSize: 32, bold: true, color: "FFFFFF",
+        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" }
+      });
+      if (clientName) {
+        s1.addText(`Client: ${clientName}`, {
+          x: 0.6, y: 1.4, w: 8.8, h: 0.6, fontSize: 20, color: "FFFFFF",
+          shadow: { type: "outer", blur: 2, offset: 1, color: "000000" }
+        });
+      }
+    } catch {}
+  }
+
+  // Slide 2: photo + prepared-by/email/phone/date
+  if (COVER_URLS[1]) {
+    try {
+      const s2 = pptx.addSlide();
+      const img = await urlToDataUrl(COVER_URLS[1]);
+      s2.addImage({ data: img, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
+
+      const lines: string[] = [];
+      if (contactName) lines.push(`Prepared by: ${contactName}`);
+      if (email)       lines.push(`Email: ${email}`);
+      if (phone)       lines.push(`Phone: ${phone}`);
+      if (date)        lines.push(`Date: ${date}`);
+
+      s2.addText(lines.join("\n"), {
+        x: 0.6, y: 0.6, w: 8.8, h: 2.0, fontSize: 20, color: "FFFFFF", lineSpacing: 20,
+        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" }
+      });
+    } catch {}
+  }
+
+  // --------- PRODUCT SLIDES (one slide per product: side-by-side images + description) ---------
+  for (const p of items) {
     const s = pptx.addSlide();
-    s.addImage({
-      data: await urlToDataUrl(COVER_URLS[0]),
-      x: 0, y: 0, w: FULL_W, h: FULL_H,
-      sizing: { type: "cover", w: FULL_W, h: FULL_H },
-    } as any);
-    s.addText(projectName, {
-      x: 0.6, y: 0.6, w: 8.8, h: 1,
-      fontSize: 32, bold: true, color: "FFFFFF",
-      shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
-    });
-    if (clientName) {
-      s.addText(`Client: ${clientName}`, {
-        x: 0.6, y: 1.4, w: 8.8, h: 0.6,
-        fontSize: 20, color: "FFFFFF",
-        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+
+    // Title / SKU
+    s.addText(p.name || "—", { x: 0.5, y: 0.2, w: 9.0, h: 0.6, fontSize: 20, bold: true });
+    if (p.code) s.addText(`SKU: ${p.code}`, { x: 0.5, y: 0.7, w: 9.0, h: 0.4, fontSize: 12, color: "666666" });
+
+    // Two columns (images), then description across the bottom
+    const marginX = 0.5;
+    const gap = 0.4;
+    const colW = (FULL_W - marginX * 2 - gap) / 2; // two equal columns
+    const topY = 1.1;
+    const imgH = 3.2;
+
+    // Left: product photo (contain to avoid cropping)
+    if (p.imageProxied) {
+      try {
+        const photo = await urlToDataUrl(p.imageProxied);
+        s.addImage({
+          data: photo, x: marginX, y: topY, w: colW, h: imgH,
+          sizing: { type: "contain", w: colW, h: imgH }
+        } as any);
+      } catch {}
+    }
+
+    // Right: spec PDF first page (rendered to image)
+    let specPreview: string | null = null;
+    if (p.pdfUrl) {
+      specPreview = await pdfFirstPageToDataUrl(p.pdfUrl);
+    }
+    if (specPreview) {
+      s.addImage({
+        data: specPreview, x: marginX + colW + gap, y: topY, w: colW, h: imgH,
+        sizing: { type: "contain", w: colW, h: imgH }
+      } as any);
+    } else if (p.pdfUrl) {
+      // Fallback: clickable text if preview failed
+      s.addText("Open Spec Sheet (PDF)", {
+        x: marginX + colW + gap, y: topY + imgH / 2 - 0.2, w: colW, h: 0.4,
+        fontSize: 12, underline: true, align: "center",
+        hyperlink: { url: p.pdfUrl }
       });
     }
-  } catch {}
 
-  // ---------- COVER 2 ----------
-  try {
-    const s = pptx.addSlide();
-    s.addImage({
-      data: await urlToDataUrl(COVER_URLS[1]),
-      x: 0, y: 0, w: FULL_W, h: FULL_H,
-      sizing: { type: "cover", w: FULL_W, h: FULL_H },
-    } as any);
-    const lines: string[] = [];
-    if (contactName) lines.push(`Prepared by: ${contactName}`);
-    if (email)       lines.push(`Email: ${email}`);
-    if (phone)       lines.push(`Phone: ${phone}`);
-    if (date)        lines.push(`Date: ${date}`);
-    s.addText(lines.join("\n"), {
-      x: 0.6, y: 0.6, w: 8.8, h: 2,
-      fontSize: 20, color: "FFFFFF", lineSpacing: 20,
-      shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+    // Description (+ optional bullets) across the bottom
+    const descTop = topY + imgH + 0.25;
+    const descH = FULL_H - descTop - 0.3;
+
+    const bullets =
+      (p.specsBullets ?? [])
+        .slice(0, 8)
+        .map(b => `• ${b}`)
+        .join("\n");
+
+    const body = [p.description || "", bullets].filter(Boolean).join("\n\n");
+
+    s.addText(body || " ", {
+      x: marginX, y: descTop, w: FULL_W - marginX * 2, h: descH,
+      fontSize: 12, valign: "top", shrinkText: true
     });
-  } catch {}
 
-  // ---------- PRODUCTS ----------
-  for (const p of items) {
-    if (LAYOUT === "one") {
-      // ONE-SLIDE LAYOUT
-      const s = pptx.addSlide();
+    // Links row (optional)
+    let linkY = descTop + descH - 0.35;
+    if (p.url) {
+      s.addText("Product page", {
+        x: marginX, y: linkY, w: 3.0, h: 0.3,
+        fontSize: 12, underline: true, hyperlink: { url: p.url }
+      });
+    }
+    if (p.pdfUrl) {
+      s.addText("Spec sheet (PDF)", {
+        x: marginX + 3.2, y: linkY, w: 3.5, h: 0.3,
+        fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl }
+      });
+    }
 
-      // Title
-      s.addText(p.name || "—", { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 20, bold: true });
-      if (p.code) s.addText(`SKU: ${p.code}`, { x: 0.5, y: 0.75, w: 9, h: 0.35, fontSize: 12 });
-
-      // Top row: product image (left) + text (right)
-      // image box
-      if (p.imageProxied || (p as any).imageUrl) {
-        try {
-          const imgUrl = p.imageProxied || (p as any).imageUrl;
-          s.addImage({
-            data: await urlToDataUrl(imgUrl!),
-            x: 0.5, y: 1.1, w: 4.8, h: 3.2,
-            sizing: { type: "contain", w: 4.8, h: 3.2 }, // no crop/stretch
-          } as any);
-        } catch {}
-      }
-
-      // right column text
-      const rightX = 5.5;
-      let rightY = 1.1;
-
-      if (p.description) {
-        s.addText(p.description, {
-          x: rightX, y: rightY, w: 4.0, h: 1.5,
-          fontSize: 12, valign: "top", shrinkText: true,
-        });
-        rightY += 1.55;
-      }
-
-      if (p.specsBullets && p.specsBullets.length) {
-        s.addText("Specifications", {
-          x: rightX, y: rightY, w: 4.0, h: 0.3,
-          fontSize: 12, bold: true,
-        });
-        s.addText(p.specsBullets.join("\n"), {
-          x: rightX, y: rightY + 0.35, w: 4.0, h: 1.25,
-          fontSize: 12, bullet: { type: "bullet" }, valign: "top", shrinkText: true,
-        });
-      }
-
-      // Bottom row: PDF preview across the slide (if available)
-      if (p.pdfUrl) {
-        const png = await pdfFirstPageToPngDataUrl(p.pdfUrl);
-        if (png) {
-          s.addImage({
-            data: png, x: 0.5, y: 4.4, w: 9.0, h: 1.1,
-            sizing: { type: "contain", w: 9.0, h: 1.1 },
-          } as any);
-        } else {
-          s.addText("Spec sheet could not be embedded (open PDF link below)", {
-            x: 0.5, y: 4.6, w: 9.0, h: 0.5, fontSize: 12, color: "AA0000",
-          });
-        }
-        s.addText("Open Spec Sheet (PDF)", {
-          x: 0.5, y: 5.2, w: 9.0, h: 0.35, fontSize: 12, underline: true,
-          hyperlink: { url: p.pdfUrl },
-        });
-      }
-
-      // Meta + links
-      if (p.category) {
-        s.addText(`Category: ${p.category}`, {
-          x: 0.5, y: 5.0, w: 4.5, h: 0.3, fontSize: 10, color: "666666",
-        });
-      }
-      let linkY = 5.2;
-      if (p.url) {
-        s.addText("Product page", {
-          x: 5.5, y: linkY, w: 4.0, h: 0.35,
-          fontSize: 12, underline: true, hyperlink: { url: p.url },
-        });
-      }
-    } else {
-      // TWO-SLIDE LAYOUT (product slide + separate spec slide)
-      // Slide A
-      {
-        const s = pptx.addSlide();
-
-        if (p.imageProxied || (p as any).imageUrl) {
-          try {
-            const imgUrl = p.imageProxied || (p as any).imageUrl;
-            s.addImage({
-              data: await urlToDataUrl(imgUrl!),
-              x: 0.5, y: 0.7, w: 5.5, h: 4.1,
-              sizing: { type: "contain", w: 5.5, h: 4.1 },
-            } as any);
-          } catch {}
-        }
-
-        s.addText(p.name || "—", { x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true });
-        if (p.code) s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.4, w: 6.2, h: 0.35, fontSize: 12 });
-
-        if (p.description) {
-          s.addText(p.description, {
-            x: 6.2, y: 1.9, w: 6.2, h: 1.8, fontSize: 12, valign: "top", shrinkText: true,
-          });
-        }
-        if (p.specsBullets?.length) {
-          s.addText("Specifications", {
-            x: 6.2, y: 3.8, w: 6.2, h: 0.3, fontSize: 12, bold: true,
-          });
-          s.addText(p.specsBullets.join("\n"), {
-            x: 6.2, y: 4.1, w: 6.2, h: 1.4,
-            fontSize: 12, bullet: { type: "bullet" }, valign: "top", shrinkText: true,
-          });
-        }
-
-        let linkY = 5.8;
-        if (p.url) {
-          s.addText("Product page", {
-            x: 6.2, y: linkY, w: 6.2, h: 0.35,
-            fontSize: 12, underline: true, hyperlink: { url: p.url },
-          });
-          linkY += 0.4;
-        }
-        if (p.pdfUrl) {
-          s.addText("Spec sheet (PDF)", {
-            x: 6.2, y: linkY, w: 6.2, h: 0.35,
-            fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl },
-          });
-        }
-        if (p.category) {
-          s.addText(`Category: ${p.category}`, {
-            x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666",
-          });
-        }
-      }
-
-      // Slide B (spec page)
-      if (p.pdfUrl) {
-        const s = pptx.addSlide();
-        s.addText(p.name || "—", { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, bold: true });
-        if (p.code) s.addText(`SKU: ${p.code}`, { x: 0.5, y: 0.75, w: 9, h: 0.35, fontSize: 12 });
-
-        const png = await pdfFirstPageToPngDataUrl(p.pdfUrl);
-        if (png) {
-          s.addImage({
-            data: png, x: 0.5, y: 1.2, w: 9, h: 4.0,
-            sizing: { type: "contain", w: 9, h: 4.0 },
-          } as any);
-        } else {
-          s.addText("Spec sheet could not be embedded (open PDF link below)", {
-            x: 0.5, y: 2.6, w: 9, h: 0.8, fontSize: 14, color: "AA0000",
-          });
-        }
-        s.addText("Open Spec Sheet (PDF)", {
-          x: 0.5, y: 5.5, w: 9, h: 0.35, fontSize: 12, underline: true,
-          hyperlink: { url: p.pdfUrl },
-        });
-      }
+    if (p.category) {
+      s.addText(`Category: ${p.category}`, {
+        x: FULL_W - marginX - 3.0, y: linkY, w: 3.0, h: 0.3,
+        fontSize: 10, color: "666666", align: "right"
+      });
     }
   }
 
-  // ---------- BACK PAGES ----------
+  // --------- BACK PAGES ---------
   for (const url of BACK_URLS) {
     try {
+      const data = await urlToDataUrl(url);
       const s = pptx.addSlide();
-      s.addImage({
-        data: await urlToDataUrl(url),
-        x: 0, y: 0, w: FULL_W, h: FULL_H,
-        sizing: { type: "cover", w: FULL_W, h: FULL_H },
-      } as any);
+      s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H, sizing: { type: "cover", w: FULL_W, h: FULL_H } } as any);
     } catch {}
   }
 
