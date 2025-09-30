@@ -9,7 +9,6 @@ const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------- helpers ---------- */
 
-// Blob/DataURL helpers
 function blobToDataUrl(b: Blob) {
   return new Promise<string>((resolve) => {
     const r = new FileReader();
@@ -67,32 +66,35 @@ async function addContainedImage(
   slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// Build candidate preview paths from pdfUrl and/or code (support png/jpg/jpeg/webp)
+// Build candidate preview paths from pdfUrl and/or code
 function specPreviewCandidates(pdfUrl?: string, code?: string) {
-  const exts = ["png", "jpg", "jpeg", "webp"];
+  const lowerExts = ["png", "jpg", "jpeg", "webp"];
+  const upperExts = ["PNG", "JPG", "JPEG", "WEBP"];
+  const allExts = [...lowerExts, ...upperExts];
   const out: string[] = [];
 
-  // /specs/NAME.pdf -> /specs/NAME.{png|jpg|...}
+  // /specs/NAME.pdf -> /specs/NAME.(png|jpg|...)
   if (pdfUrl) {
-    const m = decodeURIComponent(pdfUrl).match(/\/specs\/([^/?#]+)\.pdf$/i);
-    if (m) exts.forEach(ext => out.push(`/specs/${m[1]}.${ext}`));
+    const u = decodeURIComponent(pdfUrl);
+    const m = u.match(/\/specs\/([^/?#]+)\.pdf$/i);
+    if (m) allExts.forEach(ext => out.push(`/specs/${m[1]}.${ext}`));
 
     // /api/pdf-proxy?url=https://.../NAME.pdf
-    const m2 = pdfUrl.match(/[?&]url=([^&]+)/);
+    const m2 = u.match(/[?&]url=([^&]+)/);
     if (m2) {
       try {
         const decoded = decodeURIComponent(m2[1]);
         const base = decoded.split("/").pop() || "";
         const key = base.replace(/\.pdf(\?.*)?$/i, "");
-        if (key) exts.forEach(ext => out.push(`/specs/${key}.${ext}`));
-      } catch { /* ignore */ }
+        if (key) allExts.forEach(ext => out.push(`/specs/${key}.${ext}`));
+      } catch {}
     }
   }
 
   // Fallback to product code
   if (code) {
     const safe = String(code).trim();
-    if (safe) exts.forEach(ext => out.push(`/specs/${safe}.${ext}`));
+    if (safe) allExts.forEach(ext => out.push(`/specs/${safe}.${ext}`));
   }
 
   // De-dup
@@ -103,10 +105,13 @@ function specPreviewCandidates(pdfUrl?: string, code?: string) {
 async function firstExistingDataUrl(urls: string[]) {
   for (const u of urls) {
     try {
-      // Many static hosts support HEAD; if not, GET will still work
-      const r = await fetch(u, { method: "HEAD" });
-      if (r.ok) return urlToDataUrl(u);
-    } catch { /* ignore and try next */ }
+      // HEAD first (fast if supported)
+      const head = await fetch(u, { method: "HEAD" });
+      if (head.ok) return urlToDataUrl(u);
+      // Some hosts block HEAD — try GET
+      const get = await fetch(u, { method: "GET" });
+      if (get.ok) return blobToDataUrl(await get.blob());
+    } catch { /* try next */ }
   }
   return undefined;
 }
@@ -137,7 +142,6 @@ export async function exportPptx({
 
   /* ---------- COVERS ---------- */
 
-  // Slide 1
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
@@ -159,7 +163,6 @@ export async function exportPptx({
     } catch {}
   }
 
-  // Slide 2
   if (COVER_URLS[1]) {
     try {
       const s2 = pptx.addSlide();
@@ -183,10 +186,9 @@ export async function exportPptx({
   /* ---------- PRODUCT + SPEC SLIDES ---------- */
 
   for (const p of items) {
-    // ---- Product slide
+    // Product slide
     const s = pptx.addSlide();
 
-    // Product image (left), keep aspect
     if (p.imageProxied || p.imageUrl) {
       try {
         const imgData = await urlToDataUrl(p.imageProxied || p.imageUrl!);
@@ -194,39 +196,29 @@ export async function exportPptx({
       } catch {}
     }
 
-    // Right side text
     s.addText(p.name || "—", { x: 6.2, y: 0.7, w: 6.2, h: 0.6, fontSize: 20, bold: true });
     if (p.code) s.addText(`SKU: ${p.code}`, { x: 6.2, y: 1.3, w: 6.2, h: 0.35, fontSize: 12 });
 
-    const bullets =
-      (p.specsBullets ?? [])
-        .slice(0, 8)
-        .map((b) => `• ${b}`)
-        .join("\n");
-
+    const bullets = (p.specsBullets ?? []).slice(0, 8).map(b => `• ${b}`).join("\n");
     const bodyText = [p.description, bullets].filter(Boolean).join("\n\n");
 
     s.addText(bodyText, {
       x: 6.2, y: 1.8, w: 6.2, h: 3.2,
-      fontSize: 12, valign: "top",
-      lineSpacing: 16,
-      shrinkText: true,
+      fontSize: 12, valign: "top", lineSpacing: 16, shrinkText: true,
     });
 
     let linkY = 5.25;
-    if (p.url)
-      s.addText("Product page", { x: 6.2, y: linkY, w: 6.2, h: 0.35, fontSize: 12, underline: true, hyperlink: { url: p.url } });
-    if (p.pdfUrl)
-      s.addText("Spec sheet (PDF)", { x: 6.2, y: linkY + 0.4, w: 6.2, h: 0.35, fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl } });
+    if (p.url)    s.addText("Product page", { x: 6.2, y: linkY,        w: 6.2, h: 0.35, fontSize: 12, underline: true, hyperlink: { url: p.url } });
+    if (p.pdfUrl) s.addText("Spec sheet (PDF)", { x: 6.2, y: linkY+0.4, w: 6.2, h: 0.35, fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl } });
 
     if (p.category)
       s.addText(`Category: ${p.category}`, { x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666" });
 
-    // ---- Spec slide (when a PDF is present)
+    // Spec slide (bigger preview area)
     if (p.pdfUrl) {
       const s2 = pptx.addSlide();
       s2.addText(`${p.name || "—"} — Specifications`, {
-        x: 0.5, y: 0.4, w: 9.0, h: 0.45, fontSize: 18, bold: true,
+        x: 0.5, y: 0.35, w: 9.0, h: 0.45, fontSize: 18, bold: true,
       });
 
       const preview = await firstExistingDataUrl(
@@ -234,7 +226,8 @@ export async function exportPptx({
       );
 
       if (preview) {
-        await addContainedImage(s2, preview, { x: 0.25, y: 0.75, w: 9.5, h: 4.6 });
+        // Bigger box: almost full width/height below the title
+        await addContainedImage(s2, preview, { x: 0.05, y: 0.75, w: 9.9, h: 4.95 });
       } else {
         s2.addText("Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs.)", {
           x: 0.5, y: 1.8, w: 9.0, h: 1.0, fontSize: 14, color: "888888"
@@ -242,7 +235,7 @@ export async function exportPptx({
       }
 
       s2.addText("Open full spec (PDF)", {
-        x: 0.5, y: 5.3, w: 9.0, h: 0.35, fontSize: 12, underline: true,
+        x: 0.5, y: 5.35, w: 9.0, h: 0.35, fontSize: 12, underline: true,
         hyperlink: { url: p.pdfUrl },
       });
     }
