@@ -215,7 +215,8 @@ export async function exportPptx({
       if (candidate) {
         try {
           const prevData = await urlToDataUrl(candidate);
-          await addContainedImage(s2, prevData, { x: 0.5, y: 0.9, w: 9.0, h: 4.2 });
+          await addContainedImage(s2, prevData, { x: 0.25, y: 0.75, w: 9.5, h: 4.6 });
+
           addedImage = true;
         } catch { /* fall through to message */ }
       }
