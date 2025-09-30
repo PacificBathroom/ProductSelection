@@ -4,7 +4,7 @@ import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
 import { exportPptx } from "./lib/exportPptx";
 
-// helpers
+// tiny helpers
 const includes = (h: string, n: string) => h.toLowerCase().includes(n.toLowerCase());
 const title = (s?: string) => (s ?? "").trim() || "—";
 
@@ -69,20 +69,16 @@ export default function App() {
   const [phone, setPhone] = useState("");
   const [date, setDate] = useState("");
 
-  // export (fallback to all visible if none selected)
+  // export
   async function onExportClick() {
+    // If nothing is selected, export everything currently visible
     const list = selectedList.length ? selectedList : visible;
     if (!list.length) {
       alert("No products to export.");
       return;
     }
     await exportPptx({
-      projectName,
-      clientName,
-      contactName,
-      email,
-      phone,
-      date,
+      projectName, clientName, contactName, email, phone, date,
       items: list,
     });
   }
@@ -193,7 +189,6 @@ export default function App() {
         {(visible ?? []).map((p: Product, i: number) => {
           const k = keyOf(p);
           const isSel = !!selected[k];
-          const imgSrc = p.imageProxied || (p as any).imageUrl;
           return (
             <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
               <label className="checkbox">
@@ -201,8 +196,11 @@ export default function App() {
               </label>
 
               <div className="thumb">
-                {imgSrc ? (
-                  <img src={imgSrc} alt={p.name || p.code || "product"} />
+                {p.imageProxied || (p as any).imageUrl ? (
+                  <img
+                    src={p.imageProxied || (p as any).imageUrl}
+                    alt={p.name || p.code || "product"}
+                  />
                 ) : (
                   <div className="ph">No image</div>
                 )}
@@ -215,7 +213,7 @@ export default function App() {
 
                 {p.specsBullets && p.specsBullets.length > 0 && (
                   <ul className="specs">
-                    {p.specsBullets.slice(0, 4).map((s, j) => (
+                    {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
                       <li key={j}>{s}</li>
                     ))}
                   </ul>
@@ -228,7 +226,11 @@ export default function App() {
                     </a>
                   )}
                   {p.pdfUrl && (
-                    <a href={p.pdfUrl} target="_blank" rel="noreferrer">
+                    <a
+                      href={`/api/pdf-proxy?url=${encodeURIComponent(p.pdfUrl)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
                       Spec sheet (PDF)
                     </a>
                   )}
