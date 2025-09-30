@@ -32,7 +32,7 @@ async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> 
   return { w: img.naturalWidth, h: img.naturalHeight };
 }
 
-// Fit an image into a bounding box while preserving aspect ratio; return centered rect
+// Fit into a box while preserving aspect ratio; return centered rect
 function fitIntoBox(
   imgW: number,
   imgH: number,
@@ -45,21 +45,14 @@ function fitIntoBox(
   const rBox = boxW / boxH;
 
   let w: number, h: number;
-  if (rImg >= rBox) {
-    // image is wider relative to box -> limit by width
-    w = boxW;
-    h = w / rImg;
-  } else {
-    // image is taller -> limit by height
-    h = boxH;
-    w = h * rImg;
-  }
+  if (rImg >= rBox) { w = boxW; h = w / rImg; }
+  else { h = boxH; w = h * rImg; }
   const x = boxX + (boxW - w) / 2;
   const y = boxY + (boxH - h) / 2;
   return { x, y, w, h };
 }
 
-// Add a centered, non-cropped image to slide inside a box
+// Add a centered, non-cropped image into a box
 async function addContainedImage(
   slide: any,
   dataUrl: string,
@@ -70,10 +63,32 @@ async function addContainedImage(
   slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// If we have /specs/XYZ.pdf, use /specs/XYZ.png as the preview
-function specPreviewFrom(p: Product): string | undefined {
-  const pdf = p.pdfUrl || "";
-  if (pdf.startsWith("/specs/")) return pdf.replace(/\.pdf(\?.*)?$/i, ".png");
+// Try to derive /specs/<basename>.png from various pdfUrl shapes
+function guessSpecPreviewFromPdfUrl(pdfUrl?: string): string | undefined {
+  if (!pdfUrl) return undefined;
+
+  // 1) Local: /specs/NAME.pdf  -> /specs/NAME.png
+  if (pdfUrl.startsWith("/specs/"))
+    return pdfUrl.replace(/\.pdf(\?.*)?$/i, ".png");
+
+  // 2) Proxied external: /api/pdf-proxy?url=https://.../NAME.pdf
+  const m = pdfUrl.match(/[?&]url=([^&]+)/);
+  if (m) {
+    try {
+      const decoded = decodeURIComponent(m[1]);
+      const base = decoded.split("/").pop() || "";
+      const key = base.replace(/\.pdf(\?.*)?$/i, "");
+      if (key) return `/specs/${key}.png`;
+    } catch { /* ignore */ }
+  }
+
+  // 3) Raw external https://.../NAME.pdf (if you ever pass those through)
+  if (/^https?:\/\//i.test(pdfUrl)) {
+    const base = pdfUrl.split("/").pop() || "";
+    const key = base.replace(/\.pdf(\?.*)?$/i, "");
+    if (key) return `/specs/${key}.png`;
+  }
+
   return undefined;
 }
 
@@ -176,7 +191,7 @@ export async function exportPptx({
       x: 6.2, y: 1.8, w: 6.2, h: 3.2,
       fontSize: 12, valign: "top",
       lineSpacing: 16,
-      shrinkText: true, // keep it inside the box
+      shrinkText: true,
     });
 
     let linkY = 5.25;
@@ -188,30 +203,33 @@ export async function exportPptx({
     if (p.category)
       s.addText(`Category: ${p.category}`, { x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666" });
 
-    // ---- Spec slide (image preview, centered and non-cropped)
-    const specPreview = specPreviewFrom(p);
-    if (specPreview) {
+    // ---- Spec slide (always try when we have a PDF URL)
+    if (p.pdfUrl) {
       const s2 = pptx.addSlide();
       s2.addText(`${p.name || "—"} — Specifications`, {
         x: 0.5, y: 0.4, w: 9.0, h: 0.45, fontSize: 18, bold: true,
       });
 
-      try {
-        const prevData = await urlToDataUrl(specPreview);
-        // Big centered box for the spec image
-        await addContainedImage(s2, prevData, { x: 0.5, y: 0.9, w: 9.0, h: 4.2 });
-      } catch {
-        s2.addText("No preview image available for this spec.", {
+      const candidate = guessSpecPreviewFromPdfUrl(p.pdfUrl);
+      let addedImage = false;
+      if (candidate) {
+        try {
+          const prevData = await urlToDataUrl(candidate);
+          await addContainedImage(s2, prevData, { x: 0.5, y: 0.9, w: 9.0, h: 4.2 });
+          addedImage = true;
+        } catch { /* fall through to message */ }
+      }
+
+      if (!addedImage) {
+        s2.addText("Spec preview image not found.\n(Expecting a PNG beside the PDF in /public/specs.)", {
           x: 0.5, y: 1.8, w: 9.0, h: 1.0, fontSize: 14, color: "888888"
         });
       }
 
-      if (p.pdfUrl) {
-        s2.addText("Open full spec (PDF)", {
-          x: 0.5, y: 5.3, w: 9.0, h: 0.35, fontSize: 12, underline: true,
-          hyperlink: { url: p.pdfUrl },
-        });
-      }
+      s2.addText("Open full spec (PDF)", {
+        x: 0.5, y: 5.3, w: 9.0, h: 0.35, fontSize: 12, underline: true,
+        hyperlink: { url: p.pdfUrl },
+      });
     }
   }
 
