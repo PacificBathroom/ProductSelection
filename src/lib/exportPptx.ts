@@ -1,13 +1,13 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
 
-const FULL_W = 10;      // 16:9 slide width (in)
-const FULL_H = 5.625;   // 16:9 slide height
+const FULL_W = 10;      // 16:9 width (inches)
+const FULL_H = 5.625;   // 16:9 height (inches)
 
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/** Fetch any same-origin (or proxied) URL and return as data URL */
+/** Fetch a (same-origin / proxied) URL and return a data URL */
 async function urlToDataUrl(url: string): Promise<string> {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`fetch failed: ${url} (${res.status})`);
@@ -19,29 +19,29 @@ async function urlToDataUrl(url: string): Promise<string> {
   });
 }
 
-/** Lazy-load pdf.js and render first page -> PNG data URL (no worker) */
-let pdfLib: any | null = null;
+/** Render first page of a PDF to PNG data URL using pdf.js from CDN (no worker) */
 async function pdfFirstPageToPngDataUrl(url: string): Promise<string | null> {
   try {
-    if (!pdfLib) {
-      // legacy build is friendlier with bundlers
-      pdfLib = await import("pdfjs-dist/build/pdf");
-    }
-    // No worker = no bundler complaints
-    const loadingTask = pdfLib.getDocument({ url, disableWorker: true });
+    // Load pdf.js at runtime from CDN so Vite/Rollup doesn’t try to bundle it.
+    const pdfjs = await import(
+      /* @vite-ignore */ "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.mjs"
+    ) as any;
+
+    const loadingTask = pdfjs.getDocument({ url, disableWorker: true });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
 
-    // Render at 2x for clarity
+    // Render ~2x for clarity
     const viewport = page.getViewport({ scale: 2 });
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d")!;
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
-    await page.render({ canvasContext: ctx, viewport }).promise;
 
+    await page.render({ canvasContext: ctx, viewport }).promise;
     return canvas.toDataURL("image/png");
-  } catch {
+  } catch (e) {
+    console.warn("pdf render failed:", e);
     return null;
   }
 }
@@ -68,7 +68,7 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // ---------- COVERS ----------
+  // ---------- COVER 1 ----------
   try {
     const s1 = pptx.addSlide();
     s1.addImage({
@@ -90,6 +90,7 @@ export async function exportPptx({
     }
   } catch {}
 
+  // ---------- COVER 2 ----------
   try {
     const s2 = pptx.addSlide();
     s2.addImage({
@@ -113,7 +114,7 @@ export async function exportPptx({
 
   // ---------- PRODUCTS ----------
   for (const p of items) {
-    // Product slide (image + details)
+    // Slide A: product image + details
     {
       const s = pptx.addSlide();
 
@@ -123,7 +124,7 @@ export async function exportPptx({
           s.addImage({
             data: await urlToDataUrl(imgUrl),
             x: 0.5, y: 0.7, w: 5.5, h: 4.1,
-            sizing: { type: "contain", w: 5.5, h: 4.1 },
+            sizing: { type: "contain", w: 5.5, h: 4.1 }, // do not crop/stretch
           } as any);
         } catch {}
       }
@@ -137,24 +138,27 @@ export async function exportPptx({
         });
       }
 
+      // Description (auto-fit)
       if (p.description) {
         s.addText(p.description, {
-          x: 6.2, y: 1.9, w: 6.2, h: 1.6,
+          x: 6.2, y: 1.9, w: 6.2, h: 1.8,
           fontSize: 12, valign: "top", shrinkText: true,
         });
       }
 
+      // In-slide bullet specs (optional)
       const bullets = (p.specsBullets ?? []).filter(Boolean);
       if (bullets.length) {
         s.addText("Specifications", {
-          x: 6.2, y: 3.6, w: 6.2, h: 0.3, fontSize: 12, bold: true,
+          x: 6.2, y: 3.8, w: 6.2, h: 0.3, fontSize: 12, bold: true,
         });
         s.addText(bullets.join("\n"), {
-          x: 6.2, y: 3.9, w: 6.2, h: 1.6,
+          x: 6.2, y: 4.1, w: 6.2, h: 1.4,
           fontSize: 12, bullet: { type: "bullet" }, valign: "top", shrinkText: true,
         });
       }
 
+      // Links
       let linkY = 5.8;
       if (p.url) {
         s.addText("Product page", {
@@ -177,7 +181,7 @@ export async function exportPptx({
       }
     }
 
-    // Spec slide (PDF page 1 as image)
+    // Slide B: spec PDF (page 1) as an image
     if (p.pdfUrl) {
       const s = pptx.addSlide();
       s.addText(p.name || "—", { x: 0.5, y: 0.3, w: 9, h: 0.5, fontSize: 18, bold: true });
