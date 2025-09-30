@@ -1,20 +1,19 @@
-// src/types.ts
 export type Product = {
   code?: string;
   name?: string;
   url?: string;
-
-  // images
-  imageUrl?: string;        // raw/original
-  imageProxied?: string;    // same-origin proxied url
-
-  // content
+  imageProxied?: string;
+  imageUrl?: string;
   description?: string;
   specsBullets?: string[];
-
-  // spec
   pdfUrl?: string;
-
-  // misc
+  imageUrl?: string;        // raw/original
+  imageProxied?: string;    // same-origin proxied url
+  pdfKey?: string;   // NEW
   category?: string;
 };
+
+
+ 
+  
+
