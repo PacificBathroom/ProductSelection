@@ -9,16 +9,20 @@ const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------- helpers ---------- */
 
+// Blob/DataURL helpers
+function blobToDataUrl(b: Blob) {
+  return new Promise<string>((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.readAsDataURL(b);
+  });
+}
+
 // Same-origin or proxied URL -> data URL
 async function urlToDataUrl(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${url}`);
-  const blob = await res.blob();
-  return await new Promise<string>((resolve) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.readAsDataURL(blob);
-  });
+  return blobToDataUrl(await res.blob());
 }
 
 // Read natural (pixel) dimensions from a data URL
@@ -63,32 +67,47 @@ async function addContainedImage(
   slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// Try to derive /specs/<basename>.png from various pdfUrl shapes
-function guessSpecPreviewFromPdfUrl(pdfUrl?: string): string | undefined {
-  if (!pdfUrl) return undefined;
+// Build candidate preview paths from pdfUrl and/or code (support png/jpg/jpeg/webp)
+function specPreviewCandidates(pdfUrl?: string, code?: string) {
+  const exts = ["png", "jpg", "jpeg", "webp"];
+  const out: string[] = [];
 
-  // 1) Local: /specs/NAME.pdf  -> /specs/NAME.png
-  if (pdfUrl.startsWith("/specs/"))
-    return pdfUrl.replace(/\.pdf(\?.*)?$/i, ".png");
+  // /specs/NAME.pdf -> /specs/NAME.{png|jpg|...}
+  if (pdfUrl) {
+    const m = decodeURIComponent(pdfUrl).match(/\/specs\/([^/?#]+)\.pdf$/i);
+    if (m) exts.forEach(ext => out.push(`/specs/${m[1]}.${ext}`));
 
-  // 2) Proxied external: /api/pdf-proxy?url=https://.../NAME.pdf
-  const m = pdfUrl.match(/[?&]url=([^&]+)/);
-  if (m) {
+    // /api/pdf-proxy?url=https://.../NAME.pdf
+    const m2 = pdfUrl.match(/[?&]url=([^&]+)/);
+    if (m2) {
+      try {
+        const decoded = decodeURIComponent(m2[1]);
+        const base = decoded.split("/").pop() || "";
+        const key = base.replace(/\.pdf(\?.*)?$/i, "");
+        if (key) exts.forEach(ext => out.push(`/specs/${key}.${ext}`));
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Fallback to product code
+  if (code) {
+    const safe = String(code).trim();
+    if (safe) exts.forEach(ext => out.push(`/specs/${safe}.${ext}`));
+  }
+
+  // De-dup
+  return Array.from(new Set(out));
+}
+
+// Try a list of URLs and return the first one that exists as a dataURL
+async function firstExistingDataUrl(urls: string[]) {
+  for (const u of urls) {
     try {
-      const decoded = decodeURIComponent(m[1]);
-      const base = decoded.split("/").pop() || "";
-      const key = base.replace(/\.pdf(\?.*)?$/i, "");
-      if (key) return `/specs/${key}.png`;
-    } catch { /* ignore */ }
+      // Many static hosts support HEAD; if not, GET will still work
+      const r = await fetch(u, { method: "HEAD" });
+      if (r.ok) return urlToDataUrl(u);
+    } catch { /* ignore and try next */ }
   }
-
-  // 3) Raw external https://.../NAME.pdf (if you ever pass those through)
-  if (/^https?:\/\//i.test(pdfUrl)) {
-    const base = pdfUrl.split("/").pop() || "";
-    const key = base.replace(/\.pdf(\?.*)?$/i, "");
-    if (key) return `/specs/${key}.png`;
-  }
-
   return undefined;
 }
 
@@ -168,9 +187,9 @@ export async function exportPptx({
     const s = pptx.addSlide();
 
     // Product image (left), keep aspect
-    if (p.imageProxied) {
+    if (p.imageProxied || p.imageUrl) {
       try {
-        const imgData = await urlToDataUrl(p.imageProxied);
+        const imgData = await urlToDataUrl(p.imageProxied || p.imageUrl!);
         await addContainedImage(s, imgData, { x: 0.5, y: 0.7, w: 5.5, h: 4.1 });
       } catch {}
     }
@@ -203,26 +222,21 @@ export async function exportPptx({
     if (p.category)
       s.addText(`Category: ${p.category}`, { x: 0.5, y: 5.1, w: 5.5, h: 0.3, fontSize: 10, color: "666666" });
 
-    // ---- Spec slide (always try when we have a PDF URL)
+    // ---- Spec slide (when a PDF is present)
     if (p.pdfUrl) {
       const s2 = pptx.addSlide();
       s2.addText(`${p.name || "—"} — Specifications`, {
         x: 0.5, y: 0.4, w: 9.0, h: 0.45, fontSize: 18, bold: true,
       });
 
-      const candidate = guessSpecPreviewFromPdfUrl(p.pdfUrl);
-      let addedImage = false;
-      if (candidate) {
-        try {
-          const prevData = await urlToDataUrl(candidate);
-          await addContainedImage(s2, prevData, { x: 0.25, y: 0.75, w: 9.5, h: 4.6 });
+      const preview = await firstExistingDataUrl(
+        specPreviewCandidates(p.pdfUrl, p.code)
+      );
 
-          addedImage = true;
-        } catch { /* fall through to message */ }
-      }
-
-      if (!addedImage) {
-        s2.addText("Spec preview image not found.\n(Expecting a PNG beside the PDF in /public/specs.)", {
+      if (preview) {
+        await addContainedImage(s2, preview, { x: 0.25, y: 0.75, w: 9.5, h: 4.6 });
+      } else {
+        s2.addText("Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs.)", {
           x: 0.5, y: 1.8, w: 9.0, h: 1.0, fontSize: 14, color: "888888"
         });
       }
