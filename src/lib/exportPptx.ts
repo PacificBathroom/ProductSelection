@@ -2,43 +2,49 @@
 import type { Product } from "../types";
 import { getMergedSpecs } from "./specs";
 
-// 16:9 default slide size in pptxgenjs (inches)
+// 16:9 default slide size (inches) in pptxgenjs
 const FULL_W = 10;
 const FULL_H = 5.625;
 
-// brand images (make sure these files exist in /public/branding)
+// Brand images (ensure these exist in /public/branding)
 const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-// Layout constants (keep everything within 10in width!)
+// Layout constants
 const MARGIN = 0.4;
 const GAP = 0.3;
 const LEFT_W = 4.8;
 const RIGHT_X = MARGIN + LEFT_W + GAP;     // 0.4 + 4.8 + 0.3 = 5.5
 const RIGHT_W = FULL_W - RIGHT_X - MARGIN; // 10 - 5.5 - 0.4 = 4.1
 
-// Areas
+// First product slide layout
 const TITLE_Y = MARGIN;
 const TITLE_H = 0.6;
-const SKU_Y = TITLE_Y + TITLE_H + 0.1; // 1.1
-const SKU_H = 0.35;
+const SKU_Y   = TITLE_Y + TITLE_H + 0.10;
+const SKU_H   = 0.35;
 
-const DESC_Y = SKU_Y + SKU_H + 0.15; // ~1.6
-const DESC_H_WITH_SPECS = 1.25;      // height when specs also shown
-const DESC_H_NO_SPECS   = 3.65;      // height when no specs
+const DESC_Y  = SKU_Y + SKU_H + 0.15;
+const DESC_H_WITH_SPECS = 1.25;   // when we know there will be a specs slide
+const DESC_H_NO_SPECS   = 3.65;   // if we decide not to add a specs slide
 
-const SPECS_Y = DESC_Y + DESC_H_WITH_SPECS + 0.2; // ~3.05
-const SPECS_H = 2.0;
-
-const LINKS_Y = FULL_H - MARGIN - 0.9; // near bottom-right
-const LINK_H = 0.35;
+const LINKS_Y = FULL_H - MARGIN - 0.9;
+const LINK_H  = 0.35;
 
 const LEFT_IMG_X = MARGIN;
 const LEFT_IMG_Y = MARGIN;
 const LEFT_IMG_W = LEFT_W;
-const LEFT_IMG_H = 4.1; // fits comfortably within slide height
+const LEFT_IMG_H = 4.1;
 
-// Convert a (same-origin) URL to data URL. Works with our /api/* proxies too.
+// Second slide (Specifications) layout
+const SPEC_TITLE_Y = MARGIN;
+const SPEC_TITLE_H = 0.6;
+const SPEC_NAME_Y  = SPEC_TITLE_Y + SPEC_TITLE_H + 0.1;
+const SPEC_NAME_H  = 0.45;
+const SPEC_BOX_Y   = SPEC_NAME_Y + SPEC_NAME_H + 0.2;
+const SPEC_BOX_H   = FULL_H - SPEC_BOX_Y - MARGIN - 0.6; // leave room for link
+const SPEC_LINK_Y  = FULL_H - MARGIN - 0.4;
+
+// Convert a same-origin URL (including /api/* proxies) to a data URL
 async function urlToDataUrl(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${url}`);
@@ -72,7 +78,7 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  // ========== COVER 1 ==========
+  // ===== Cover 1 =====
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
@@ -83,7 +89,7 @@ export async function exportPptx({
         sizing: { type: "cover", w: FULL_W, h: FULL_H },
       } as any);
 
-      // Overlay text (white with soft shadow for contrast)
+      // Overlay text
       s1.addText(projectName, {
         x: 0.6, y: 0.6, w: FULL_W - 1.2, h: 1.0,
         fontSize: 32, bold: true, color: "FFFFFF",
@@ -99,7 +105,7 @@ export async function exportPptx({
     } catch {}
   }
 
-  // ========== COVER 2 ==========
+  // ===== Cover 2 =====
   if (COVER_URLS[1]) {
     try {
       const s2 = pptx.addSlide();
@@ -124,11 +130,20 @@ export async function exportPptx({
     } catch {}
   }
 
-  // ========== PRODUCT SLIDES ==========
+  // ===== Products =====
   for (const p of items) {
+    const name = (p.name || "—").trim();
+    const sku  = (p.code || "").trim();
+    const desc = (p.description || "").trim();
+
+    // Merge sheet bullets + local fallbacks (src/lib/specs.ts)
+    const mergedSpecs = getMergedSpecs(p);
+    const haveSpecs = mergedSpecs.length > 0;
+
+    // ---- Slide A: image + overview ----
     const s = pptx.addSlide();
 
-    // Left image (non-cropping)
+    // left image (non-cropping)
     if (p.imageProxied) {
       try {
         const data = await urlToDataUrl(p.imageProxied);
@@ -136,18 +151,10 @@ export async function exportPptx({
           data,
           x: LEFT_IMG_X, y: LEFT_IMG_Y,
           w: LEFT_IMG_W, h: LEFT_IMG_H,
-          sizing: { type: "contain", w: LEFT_IMG_W, h: LEFT_IMG_H }, // keep aspect
+          sizing: { type: "contain", w: LEFT_IMG_W, h: LEFT_IMG_H }, // keep aspect ratio
         } as any);
       } catch {}
     }
-
-    // Right column
-    const name = (p.name || "—").trim();
-    const sku  = (p.code || "").trim();
-    const desc = (p.description || "").trim();
-
-    const mergedSpecs = getMergedSpecs(p); // sheet bullets, fallback from specs.ts
-    const hasSpecs = mergedSpecs.length > 0;
 
     // Title
     s.addText(name, {
@@ -164,42 +171,31 @@ export async function exportPptx({
       });
     }
 
-    // Description block
-    s.addText(desc || "", {
+    // Description (if we are going to add a specs slide, keep desc shorter)
+    s.addText(desc, {
       x: RIGHT_X, y: DESC_Y, w: RIGHT_W,
-      h: hasSpecs ? DESC_H_WITH_SPECS : DESC_H_NO_SPECS,
+      h: haveSpecs ? DESC_H_WITH_SPECS : DESC_H_NO_SPECS,
       fontSize: 12, valign: "top",
-      shrinkText: true, // auto-fit within box
+      shrinkText: true,
     });
 
-    // Specs block (real bullets)
-    if (hasSpecs) {
-      s.addText(mergedSpecs.join("\n"), {
-        x: RIGHT_X, y: SPECS_Y, w: RIGHT_W, h: SPECS_H,
-        fontSize: 12, valign: "top",
-        bullet: true, // real bullets
-        lineSpacing: 18,
-        shrinkText: true,
-      });
-    }
-
-    // Links
-    let y = LINKS_Y;
+    // Links (product + pdf)
+    let linkY = LINKS_Y;
     if (p.url) {
       s.addText("Product page", {
-        x: RIGHT_X, y, w: RIGHT_W, h: LINK_H,
+        x: RIGHT_X, y: linkY, w: RIGHT_W, h: LINK_H,
         fontSize: 12, underline: true, hyperlink: { url: p.url },
       });
-      y += 0.42;
+      linkY += 0.42;
     }
     if (p.pdfUrl) {
       s.addText("Spec sheet (PDF)", {
-        x: RIGHT_X, y, w: RIGHT_W, h: LINK_H,
+        x: RIGHT_X, y: linkY, w: RIGHT_W, h: LINK_H,
         fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl },
       });
     }
 
-    // Category (left bottom, optional)
+    // Optional category label under the image
     if (p.category) {
       s.addText(`Category: ${p.category}`, {
         x: LEFT_IMG_X, y: LEFT_IMG_Y + LEFT_IMG_H + 0.2,
@@ -207,9 +203,46 @@ export async function exportPptx({
         fontSize: 10, color: "666666",
       });
     }
+
+    // ---- Slide B: Specifications (always add if we have bullets OR a PDF link) ----
+    const needsSpecSlide = haveSpecs || !!p.pdfUrl;
+    if (needsSpecSlide) {
+      const sp = pptx.addSlide();
+
+      sp.addText("Specifications", {
+        x: MARGIN, y: SPEC_TITLE_Y, w: FULL_W - 2 * MARGIN, h: SPEC_TITLE_H,
+        fontSize: 22, bold: true, valign: "bottom",
+      });
+
+      sp.addText(name + (sku ? `  —  ${sku}` : ""), {
+        x: MARGIN, y: SPEC_NAME_Y, w: FULL_W - 2 * MARGIN, h: SPEC_NAME_H,
+        fontSize: 14, color: "666666", valign: "middle",
+      });
+
+      if (haveSpecs) {
+        sp.addText(mergedSpecs.join("\n"), {
+          x: MARGIN, y: SPEC_BOX_Y, w: FULL_W - 2 * MARGIN, h: SPEC_BOX_H,
+          fontSize: 12, bullet: true, lineSpacing: 18, valign: "top",
+          shrinkText: true,
+        });
+      } else {
+        // graceful fallback if no bullets available
+        sp.addText("Specifications are available in the spec sheet.", {
+          x: MARGIN, y: SPEC_BOX_Y, w: FULL_W - 2 * MARGIN, h: SPEC_BOX_H,
+          fontSize: 14, italic: true, color: "666666",
+        });
+      }
+
+      if (p.pdfUrl) {
+        sp.addText("Open spec sheet (PDF)", {
+          x: MARGIN, y: SPEC_LINK_Y, w: FULL_W - 2 * MARGIN, h: 0.35,
+          fontSize: 12, underline: true, hyperlink: { url: p.pdfUrl },
+        });
+      }
+    }
   }
 
-  // ========== BACK PAGES ==========
+  // ===== Back pages =====
   for (const url of BACK_URLS) {
     try {
       const data = await urlToDataUrl(url);
