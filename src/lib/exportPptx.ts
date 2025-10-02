@@ -4,7 +4,7 @@ import type { Product } from "../types";
 const FULL_W = 10;     // pptxgen 16:9 width (in)
 const FULL_H = 5.625;  // pptxgen 16:9 height (in)
 
-const COVER_URLS = ["/branding/cover.jpg", "/branding/cover2.jpg"];
+const COVER_URLS = ["/branding/cover.jpg"];
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------- helpers ---------- */
@@ -143,27 +143,7 @@ export async function exportPptx({
     } catch {}
   }
 
-  // Slide 2
-  if (COVER_URLS[1]) {
-    try {
-      const s2 = pptx.addSlide();
-      const bg = await urlToDataUrl(COVER_URLS[1]);
-      s2.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
-
-      const lines: string[] = [];
-      if (contactName) lines.push(`Prepared by: ${contactName}`);
-      if (email)       lines.push(`Email: ${email}`);
-      if (phone)       lines.push(`Phone: ${phone}`);
-      if (date)        lines.push(`Date: ${date}`);
-
-      s2.addText(lines.join("\n"), {
-        x: 0.6, y: 0.6, w: 8.8, h: 2.0,
-        fontSize: 20, color: "FFFFFF", lineSpacing: 20,
-        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
-      });
-    } catch {}
-  }
-
+  
   /* ---------- PRODUCT + SPEC SLIDES ---------- */
 
   for (const p of items) {
