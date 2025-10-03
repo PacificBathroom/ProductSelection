@@ -17,6 +17,14 @@ function nameFromUrl(u: string): string {
   }
 }
 
+const pick = (row: Row, ...keys: string[]) => {
+  for (const k of keys) {
+    const v = row[k];
+    if (v && String(v).trim()) return String(v).trim();
+  }
+  return undefined;
+};
+
 /** parse SpecsBullets from string (pipes/newlines/•/hyphens) or array */
 function parseBullets(raw?: string | string[]): string[] {
   if (!raw) return [];
@@ -120,4 +128,36 @@ export async function fetchProducts(range: string): Promise<Product[]> {
   }
 
   return rows.map(normalizeRow).filter((p) => p.name || p.code);
+}
+return rows.map((row) => {
+    const p: any = {} as Product;
+
+    p.name        = pick(row, "name", "Name", "Product");
+    p.code        = pick(row, "code", "SKU", "sku", "Item Code");
+    p.description = pick(row, "description", "Description", "Desc");
+    p.category    = pick(row, "category", "Category", "Cat");
+
+    // images / links
+    p.imageProxied    = pick(row, "imageProxied", "imageUrl", "Image", "Image URL");
+    p.url             = pick(row, "url", "Product URL", "Link");
+
+    // bullets
+    const bulletsRaw  = pick(row, "specsBullets", "Bullets", "Features") || "";
+    p.specsBullets    = bulletsRaw
+      .split(/\r?\n|•/).map((s) => s.trim()).filter(Boolean);
+
+    // PDF + preview (coalesced keys)
+    p.pdfUrl = pick(
+      row,
+      "pdfUrl", "specPdf", "specPDF", "spec", "specSheet",
+      "Spec PDF", "Spec sheet", "Spec sheet (PDF)", "PDF"
+    );
+
+    p.specPreviewUrl = pick(
+      row,
+      "specPreviewUrl", "Spec preview", "Spec Image", "Spec Preview URL"
+    );
+
+    return p as Product;
+  });
 }
