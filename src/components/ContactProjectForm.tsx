@@ -2,19 +2,17 @@
 import React from "react";
 import { useSettings } from "../state/SettingsProvider";
 import DateInput from "./DateInput";
-import ContactSelector from "./ContactSelector";
 
 export default function ContactProjectForm() {
   const { contact, project, setContact, setProject, resetToDefaults } = useSettings();
 
   return (
     <form className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Contact */}
       <div className="col-span-1 md:col-span-2">
         <h3 className="text-lg font-semibold mb-2">Contact Details</h3>
 
-        <ContactSelector />
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <TextField
             label="Name"
             value={contact.contactName}
@@ -46,6 +44,7 @@ export default function ContactProjectForm() {
         </div>
       </div>
 
+      {/* Project */}
       <div className="col-span-1 md:col-span-2">
         <h3 className="text-lg font-semibold mb-2">Project</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -73,7 +72,6 @@ export default function ContactProjectForm() {
           type="button"
           onClick={resetToDefaults}
           className="px-3 py-2 rounded bg-gray-100 hover:bg-gray-200"
-          title="Reset to defaults (env + URL)"
         >
           Reset to defaults
         </button>
@@ -91,7 +89,7 @@ function TextField({
 }: {
   label: string;
   value: string;
-  onChange: (v: string) => void;
+  onChange: (v: string) => void; // <-- typed, fixes TS7006
   required?: boolean;
   type?: string;
 }) {
@@ -103,7 +101,7 @@ function TextField({
         id={id}
         type={type}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         required={required}
         className="border rounded px-3 py-2 outline-none focus:ring w-full"
         placeholder={label}
