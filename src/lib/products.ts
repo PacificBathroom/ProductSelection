@@ -59,17 +59,25 @@ function normalizeRow(r: Row): Product {
     String(r.PdfURL || "").trim() ||
     (pdfKey ? `/specs/${pdfKey}.pdf` : "");
   // after you build each `product` from a row:
-const anyProd = product as any;
+const anyProd = p as any; // <-- use the variable you actually declared for the product
 anyProd.pdfUrl =
   anyProd.pdfUrl ||
   anyProd.specPdf ||
   anyProd.specPDF ||
   anyProd.spec ||
+  anyProd.specSheet ||
   anyProd["Spec PDF"] ||
-  anyProd["Spec sheet (PDF)"] ||
   anyProd["Spec sheet"] ||
+  anyProd["Spec sheet (PDF)"] ||
   anyProd["PDF"] ||
   undefined;
+
+anyProd.specPreviewUrl =
+  anyProd.specPreviewUrl ||
+  anyProd["Spec preview"] ||
+  anyProd["Spec Image"] ||
+  undefined;
+
 
 // Optional explicit preview image column
 anyProd.specPreviewUrl = anyProd.specPreviewUrl || anyProd["Spec preview"] || anyProd["Spec Image"] || undefined;
