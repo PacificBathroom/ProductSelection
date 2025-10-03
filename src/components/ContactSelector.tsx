@@ -6,7 +6,7 @@ export default function ContactSelector() {
   const { contacts, selectedContactId, selectContactById, contact } = useSettings();
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 mb-2">
       <label className="text-sm font-medium">Team member</label>
       <div className="flex gap-2 items-center">
         <select
@@ -22,15 +22,11 @@ export default function ContactSelector() {
             </option>
           ))}
         </select>
-        {/* Small preview so they know what's selected */}
         <div className="text-xs text-gray-600 hidden md:block">
-          <div><strong>{contact.contactName}</strong>{contact.title ? `, ${contact.title}` : ""}</div>
-          <div>{contact.email}{contact.phone ? ` • ${contact.phone}` : ""}</div>
+          <div><strong>{contact.contactName || "—"}</strong>{contact.title ? `, ${contact.title}` : ""}</div>
+          <div>{contact.email || "—"}{contact.phone ? ` • ${contact.phone}` : ""}</div>
         </div>
       </div>
-      <p className="text-xs text-gray-500">
-        Choose a person to auto-fill, or leave on “Custom” and type your own details below.
-      </p>
     </div>
   );
 }
