@@ -13,6 +13,7 @@ const textIncludes = (hay: string | undefined, needle: string) =>
 const keyOf = (p: Product) => (p.code || p.name || "") + "::" + ((p as any).url || "");
 const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 
+/* --------------------------- main product section --------------------------- */
 function MainProductPage() {
   const { contact, project } = useSettings();
 
@@ -188,6 +189,7 @@ function MainProductPage() {
   );
 }
 
+/* ------------------------------- app wrapper ------------------------------- */
 export default function App() {
   return (
     <SettingsProvider>
@@ -199,4 +201,18 @@ export default function App() {
 
         <div className="grid-2">
           <div className="card form">
-            <Contact
+            <ContactProjectForm />
+          </div>
+          <div className="card info">
+            <p className="muted">
+              Fill in your contact &amp; project details on the left, then pick products below.
+              Use the search and filters to narrow down, tick items, and click <strong>Export PPTX</strong>.
+            </p>
+          </div>
+        </div>
+
+        <MainProductPage />
+      </main>
+    </SettingsProvider>
+  );
+}
