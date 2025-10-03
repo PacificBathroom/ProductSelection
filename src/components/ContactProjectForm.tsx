@@ -2,6 +2,7 @@
 import React from "react";
 import { useSettings } from "../state/SettingsProvider";
 import DateInput from "./DateInput";
+import ContactSelector from "./ContactSelector"; // <— add this
 
 export default function ContactProjectForm() {
   const { contact, project, setContact, setProject, resetToDefaults } = useSettings();
@@ -12,7 +13,11 @@ export default function ContactProjectForm() {
       <div className="col-span-1 md:col-span-2">
         <h3 className="text-lg font-semibold mb-2">Contact Details</h3>
 
+        <ContactSelector /> {/* <— add this line */}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* …the rest of your TextFields stay the same… */}
+
           <TextField
             label="Name"
             value={contact.contactName}
