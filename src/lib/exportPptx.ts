@@ -1,5 +1,25 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
+import pptxgen from "pptxgenjs";
+import { store } from "../state/storeAccess"; // simple one-liner to access current settings if you prefer outside React
+export async function exportDeck() {
+  const { contact, project } = store.get(); // or pass contact/project in
+  const pres = new pptxgen();
+
+  const slide = pres.addSlide();
+  slide.addText(project.projectName || "Product Presentation", { x:0.5, y:0.6, w:9, h:1, fontSize:28, bold:true });
+  slide.addText(
+    `${project.clientName ?? ""}${project.clientName ? " • " : ""}${project.presentationDate ?? ""}`,
+    { x:0.5, y:1.2, w:9, h:0.6, fontSize:16 }
+  );
+  slide.addText(
+    `${contact.contactName}${contact.title ? ", " + contact.title : ""}\n${contact.email}${contact.phone ? " • " + contact.phone : ""}`,
+    { x:0.5, y:2.0, w:9, h:1.1, fontSize:14 }
+  );
+
+  // ...rest of your export logic...
+  await pres.writeFile({ fileName: `${project.projectName || "Presentation"}.pptx` });
+}
 
 /**
  * Assumptions about Product fields used here:
