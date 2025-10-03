@@ -4,34 +4,14 @@ import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
 import { exportPptx } from "./lib/exportPptx";
 import { SettingsProvider, useSettings } from "./state/SettingsProvider";
-import SettingsBridge from "./state/SettingsBridge"; // ensure this file exists (see earlier message)
+import SettingsBridge from "./state/SettingsBridge";
 import ContactProjectForm from "./components/ContactProjectForm";
 
-/* ------------------------------- small helpers ------------------------------- */
+/* helpers */
 const textIncludes = (hay: string | undefined, needle: string) =>
   (hay ?? "").toLowerCase().includes(needle.toLowerCase());
-
-const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 const keyOf = (p: Product) => (p.code || p.name || "") + "::" + ((p as any).url || "");
-
-/* -------------------------------- UI bits ----------------------------------- */
-function CoverPreview() {
-  const { contact, project } = useSettings();
-  return (
-    <div className="mt-6 p-4 border rounded">
-      <h4 className="font-semibold mb-2">Cover Preview (data available to export)</h4>
-      <div className="text-sm grid grid-cols-2 gap-2">
-        <div><strong>Contact:</strong> {contact.contactName} {contact.title ? `(${contact.title})` : ""}</div>
-        <div><strong>Email:</strong> {contact.email}</div>
-        <div><strong>Phone:</strong> {contact.phone || "—"}</div>
-        <div><strong>Company:</strong> {contact.company || "—"}</div>
-        <div><strong>Project:</strong> {project.projectName || "—"}</div>
-        <div><strong>Client:</strong> {project.clientName || "—"}</div>
-        <div><strong>Date:</strong> {project.presentationDate || "—"}</div>
-      </div>
-    </div>
-  );
-}
+const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 
 function MainProductPage() {
   const { contact, project } = useSettings();
@@ -39,7 +19,6 @@ function MainProductPage() {
   // load products
   const [items, setItems] = useState<Product[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-
   useEffect(() => {
     (async () => {
       try {
@@ -108,48 +87,48 @@ function MainProductPage() {
   return (
     <>
       {/* toolbar */}
-      <div className="toolbar mt-6 flex gap-2 items-center">
-        <input
-          className="search border rounded px-3 py-2"
-          placeholder="Search products, SKU, description..."
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <select
-          className="category border rounded px-3 py-2"
-          value={cat}
-          onChange={(e) => setCat(e.target.value)}
-        >
-          {categories.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-        <select
-          className="sort border rounded px-3 py-2"
-          value={sort}
-          onChange={(e) => setSort(e.target.value as "sheet" | "name")}
-        >
-          <option value="sheet">Sheet order</option>
-          <option value="name">Name (A–Z)</option>
-        </select>
-
-        <div className="flex-1" />
-        <div className="muted">Selected: {selectedList.length}</div>
-        <button className="primary px-4 py-2 rounded bg-black text-white" onClick={onExportClick}>
-          Export PPTX
-        </button>
+      <div className="toolbar">
+        <div className="toolbar-left">
+          <input
+            className="search"
+            placeholder="Search products, SKU, description..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <select
+            className="category"
+            value={cat}
+            onChange={(e) => setCat(e.target.value)}
+          >
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <select
+            className="sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as "sheet" | "name")}
+          >
+            <option value="sheet">Sheet order</option>
+            <option value="name">Name (A–Z)</option>
+          </select>
+        </div>
+        <div className="toolbar-right">
+          <span className="muted">Selected: {selectedList.length}</span>
+          <button className="primary" onClick={onExportClick}>Export PPTX</button>
+        </div>
       </div>
 
       {/* status */}
-      {err && <p className="error mt-2 text-red-600">Error: {err}</p>}
-      {!items && !err && <p className="mt-2">Loading…</p>}
+      {err && <p className="error">Error: {err}</p>}
+      {!items && !err && <p className="muted">Loading…</p>}
 
       {/* product grid */}
-      <div className="grid mt-4">
+      <div className="grid">
         {(visible ?? []).map((p: Product, i: number) => {
           const k = keyOf(p);
           const isSel = !!selected[k];
-          const pdfUrl = (p as any).pdfUrl as string | undefined; // avoid TS errors if not in Product type
+          const pdfUrl = (p as any).pdfUrl as string | undefined;
           const pageUrl = (p as any).url as string | undefined;
 
           return (
@@ -170,19 +149,19 @@ function MainProductPage() {
               </div>
 
               <div className="body">
-                <div className="name font-medium">{safeTitle(p.name)}</div>
-                {p.code && <div className="sku text-xs opacity-70">SKU: {p.code}</div>}
-                {p.description && <p className="desc mt-1">{p.description}</p>}
+                <div className="name">{safeTitle(p.name)}</div>
+                {p.code && <div className="sku">SKU: {p.code}</div>}
+                {p.description && <p className="desc">{p.description}</p>}
 
                 {p.specsBullets && p.specsBullets.length > 0 && (
-                  <ul className="specs mt-2 list-disc pl-5">
+                  <ul className="specs">
                     {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
                       <li key={j}>{s}</li>
                     ))}
                   </ul>
                 )}
 
-                <div className="links mt-2 flex gap-3 text-sm">
+                <div className="links">
                   {pageUrl && (
                     <a href={pageUrl} target="_blank" rel="noreferrer">
                       Product page
@@ -199,7 +178,7 @@ function MainProductPage() {
                   )}
                 </div>
 
-                {p.category && <div className="category mt-2 text-xs opacity-70">Category: {p.category}</div>}
+                {p.category && <div className="category">Category: {p.category}</div>}
               </div>
             </div>
           );
@@ -209,17 +188,15 @@ function MainProductPage() {
   );
 }
 
-/* ------------------------------ app wrapper ---------------------------------- */
 export default function App() {
   return (
     <SettingsProvider>
       <SettingsBridge />
-      <main className="max-w-5xl mx-auto p-6">
-        <h1 className="text-2xl font-bold mb-4">Project Setup</h1>
-        <ContactProjectForm />
-        <CoverPreview />
-        <MainProductPage />
-      </main>
-    </SettingsProvider>
-  );
-}
+      <main className="container">
+        <header className="page-header">
+          <h1 className="page-title">Project Setup</h1>
+        </header>
+
+        <div className="grid-2">
+          <div className="card form">
+            <Contact
