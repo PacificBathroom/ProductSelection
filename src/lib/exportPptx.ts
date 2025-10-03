@@ -4,8 +4,11 @@ import type { Product } from "../types";
 const FULL_W = 10;     // pptxgen 16:9 width (in)
 const FULL_H = 5.625;  // pptxgen 16:9 height (in)
 
-const COVER_URLS = ["/branding/cover.jpg"];
-const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
+// Use ONE cover image from public/branding/*
+const COVER_URL = "/branding/cover.jpg";
+
+// Optional back pages (keep or remove)
+const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------- helpers ---------- */
 
@@ -120,30 +123,43 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  /* ---------- COVERS ---------- */
+  /* ---------- SINGLE COVER (combined info) ---------- */
 
-  // Slide 1
-  if (COVER_URLS[0]) {
-    try {
-      const s1 = pptx.addSlide();
-      const bg = await urlToDataUrl(COVER_URLS[0]);
-      s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
-      s1.addText(projectName, {
-        x: 0.6, y: 0.6, w: 8.8, h: 1.0,
-        fontSize: 32, bold: true, color: "FFFFFF",
+  try {
+    const s1 = pptx.addSlide();
+    const bg = await urlToDataUrl(COVER_URL);
+    s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H } as any);
+
+    // Project + client
+    s1.addText(projectName, {
+      x: 0.6, y: 0.6, w: 8.8, h: 0.9,
+      fontSize: 36, bold: true, color: "FFFFFF",
+      shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+    });
+    if (clientName) {
+      s1.addText(`Client: ${clientName}`, {
+        x: 0.6, y: 1.4, w: 8.8, h: 0.6,
+        fontSize: 22, color: "FFFFFF",
+        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+    });
+    }
+
+    // Sales block (bottom-left area)
+    const lines: string[] = [];
+    if (contactName) lines.push(`Prepared by: ${contactName}`);
+    if (email)       lines.push(`Email: ${email}`);
+    if (phone)       lines.push(`Phone: ${phone}`);
+    if (date)        lines.push(`Date: ${date}`);
+
+    if (lines.length) {
+      s1.addText(lines.join("\n"), {
+        x: 0.6, y: 4.3, w: 5.8, h: 1.1,
+        fontSize: 16, color: "FFFFFF", lineSpacing: 18,
         shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
       });
-      if (clientName) {
-        s1.addText(`Client: ${clientName}`, {
-          x: 0.6, y: 1.4, w: 8.8, h: 0.6,
-          fontSize: 20, color: "FFFFFF",
-          shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
-        });
-      }
-    } catch {}
-  }
+    }
+  } catch {}
 
-  
   /* ---------- PRODUCT + SPEC SLIDES ---------- */
 
   for (const p of items) {
@@ -151,50 +167,58 @@ export async function exportPptx({
     {
       const s = pptx.addSlide();
 
-      // Large product image on the left
+      // Title centered at top
+      s.addText(p.name || "—", {
+        x: 0.5, y: 0.4, w: 9.0, h: 0.7,
+        fontSize: 28, bold: true, align: "center",
+      });
+
+      // Product image smaller, left
       if (p.imageProxied) {
         try {
           const imgData = await urlToDataUrl(p.imageProxied);
-          await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
+          await addContainedImage(s, imgData, { x: 0.7, y: 1.2, w: 4.6, h: 3.0 });
         } catch {}
       }
 
-      // Title on the right
-      s.addText(p.name || "—", {
-        x: 6.3, y: 0.7, w: 3.9, h: 0.9, fontSize: 30, bold: true,
-      });
-
-      // Body + bullets on the right
+      // Description + bullets on the right, with auto-fit
       const bullets =
         (p.specsBullets ?? []).slice(0, 8).map((b) => `• ${b}`).join("\n");
       const body = [p.description, bullets].filter(Boolean).join("\n\n");
+
       s.addText(body, {
-        x: 6.3, y: 1.8, w: 3.9, h: 3.2,
-        fontSize: 14, lineSpacing: 18, valign: "top", shrinkText: true,
+        x: 5.7, y: 1.2, w: 3.8, h: 3.6,
+        fontSize: 14, lineSpacing: 18, valign: "top",
+        shrinkText: true,    // auto-fit into the box
       });
 
-      // SKU bottom-right so it never collides with the copy
+      // SKU bottom-left
       if (p.code) {
         s.addText(p.code, {
-          x: 8.9, y: 5.25, w: 1.0, h: 0.3, fontSize: 12, color: "666666", align: "right",
+          x: 0.7, y: 5.25, w: 3.0, h: 0.3,
+          fontSize: 12, color: "666666", align: "left",
         });
       }
     }
 
-    // ---- Spec slide (always try when we have a PDF URL)
-    if (p.pdfUrl) {
+    // ---- Spec slide (only if we have a PDF URL or a PNG by SKU)
+    {
       const s2 = pptx.addSlide();
-      s2.addText(`${p.name || "—"} — Specifications`, {
-        x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
+
+      // (Optional) small heading
+      s2.addText("Specifications", {
+        x: 0.5, y: 0.25, w: 9.0, h: 0.45, fontSize: 18, bold: true, align: "center",
       });
 
       let addedImage = false;
+
+      // Try: PNG with same name as PDF, else PNG using SKU
       try {
         const previewUrl = await findSpecPreviewUrl(p.pdfUrl, p.code);
         if (previewUrl) {
           const prevData = await urlToDataUrl(previewUrl);
-          // Large centered box
-          await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
+          // Fill nearly entire slide
+          await addContainedImage(s2, prevData, { x: 0.1, y: 0.6, w: 9.8, h: 4.8 });
           addedImage = true;
         }
       } catch {}
@@ -202,8 +226,16 @@ export async function exportPptx({
       if (!addedImage) {
         s2.addText(
           "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, e.g. PMB420.png).",
-          { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
+          { x: 0.6, y: 2.1, w: 8.8, h: 1.2, fontSize: 16, color: "888888", align: "center" }
         );
+      }
+
+      // SKU bottom-left (optional, keeps context on spec page too)
+      if (p.code) {
+        s2.addText(p.code, {
+          x: 0.5, y: 5.25, w: 3.0, h: 0.3,
+          fontSize: 11, color: "666666", align: "left",
+        });
       }
     }
   }
