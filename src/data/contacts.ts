@@ -34,7 +34,7 @@ export const CONTACTS: ContactRecord[] = [
     id: "jeff-copper",
     contactName: "Jeff Copper",
     email: "jeff@pacificbathroom.com.au",
-    phone: "0499 247 061,
+    phone: "0499 247 061",
     title: "Director",
     company: "Pacific Bathroom",
     initials: "JC",
