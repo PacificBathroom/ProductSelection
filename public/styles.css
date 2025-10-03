@@ -1,3 +1,38 @@
+/* --- Fix checkboxes so they are clickable --- */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: auto;         /* restore native control */
+  width: auto;
+  height: auto;
+  border: none;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Larger, tappable floating checkbox on product cards */
+.card.product .checkbox {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+
+.card.product .checkbox input[type="checkbox"] {
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  pointer-events: auto;
+}
 :root{ --bg:#f7f7fb; --card:#fff; --text:#111827; --muted:#6b7280;
   --primary:#111827; --primary-contrast:#fff; --ring:#2563eb22;
   --border:#e5e7eb; --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.10); }
