@@ -1,25 +1,6 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
-import pptxgen from "pptxgenjs";
-import { store } from "../state/storeAccess"; // simple one-liner to access current settings if you prefer outside React
-export async function exportDeck() {
-  const { contact, project } = store.get(); // or pass contact/project in
-  const pres = new pptxgen();
-
-  const slide = pres.addSlide();
-  slide.addText(project.projectName || "Product Presentation", { x:0.5, y:0.6, w:9, h:1, fontSize:28, bold:true });
-  slide.addText(
-    `${project.clientName ?? ""}${project.clientName ? " • " : ""}${project.presentationDate ?? ""}`,
-    { x:0.5, y:1.2, w:9, h:0.6, fontSize:16 }
-  );
-  slide.addText(
-    `${contact.contactName}${contact.title ? ", " + contact.title : ""}\n${contact.email}${contact.phone ? " • " + contact.phone : ""}`,
-    { x:0.5, y:2.0, w:9, h:1.1, fontSize:14 }
-  );
-
-  // ...rest of your export logic...
-  await pres.writeFile({ fileName: `${project.projectName || "Presentation"}.pptx` });
-}
+import { store } from "../state/storeAccess";
 
 /**
  * Assumptions about Product fields used here:
@@ -38,6 +19,10 @@ const COVER_URLS = ["/branding/cover.jpg"]; // first entry used as cover backgro
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------------------------------- helpers ---------------------------------- */
+
+function sanitizeFilename(name: string) {
+  return (name || "Presentation").replace(/[^\w.-]+/g, "_");
+}
 
 // Same-origin or proxied URL -> data URL
 async function urlToDataUrl(url: string): Promise<string> {
@@ -160,8 +145,30 @@ export type ExportArgs = {
   items: Product[];
 };
 
-/* ----------------------------------- main ------------------------------------ */
+/* ------------------------------- public APIs --------------------------------- */
 
+/**
+ * Convenience: build from your app state (`storeAccess`) and product list.
+ * Call this from React, e.g. on a button click.
+ */
+export async function exportDeckFromStore(items: Product[]) {
+  const { contact, project } = store.get();
+  return exportPptx({
+    projectName: project.projectName || "Product Presentation",
+    clientName: project.clientName || "",
+    date: project.presentationDate || "",
+    contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+    email: contact.email,
+    phone: contact.phone,
+    // company on cover as part of the detail block:
+    extra: { Company: contact.company },
+    items,
+  });
+}
+
+/**
+ * Low-level API: pass everything explicitly (used internally by exportDeckFromStore).
+ */
 export async function exportPptx({
   projectName = "Product Presentation",
 
@@ -190,7 +197,7 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  /* ---------------------------------- COVERS --------------------------------- */
+  /* ---------------------------------- COVER ---------------------------------- */
 
   if (COVER_URLS[0]) {
     try {
@@ -327,6 +334,24 @@ export async function exportPptx({
     } catch { /* ignore */ }
   }
 
-  const filename = `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`;
+  const filename = `${sanitizeFilename(projectName || "Product_Presentation")}.pptx`;
   await pptx.writeFile({ fileName: filename });
+}
+
+/* ------------------------------ legacy wrapper ------------------------------- */
+/**
+ * If you previously called `exportDeck()` without args, this keeps a simple
+ * cover-only export using store values (no products). Prefer exportDeckFromStore.
+ */
+export async function exportDeck() {
+  const { contact, project } = store.get();
+  return exportPptx({
+    projectName: project.projectName || "Product Presentation",
+    clientName: project.clientName || "",
+    date: project.presentationDate || "",
+    contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+    email: contact.email,
+    phone: contact.phone,
+    items: [], // no products in this legacy path
+  });
 }
