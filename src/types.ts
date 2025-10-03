@@ -18,3 +18,19 @@ export type Product = {
   // optional grouping
   category?: string;
 };
+
+// src/types.ts
+export type ContactInfo = {
+  company?: string;
+  contactName: string;
+  email: string;
+  phone?: string;
+  title?: string;
+};
+
+export type ProjectMeta = {
+  projectName?: string;
+  clientName?: string;
+  presentationDate?: string; // 'YYYY-MM-DD'
+};
+
