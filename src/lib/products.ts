@@ -54,18 +54,19 @@ export async function fetchProducts(range: string): Promise<Product[]> {
   const payload = await res.json();
   const rows = coerceRows(payload);
 
-  const out: Product[] = rows.map((row) => {
-    const p: any = {} as Product;
+// images / links (tolerant to many header names)
+const rawImg =
+  pick(row, "imageProxied", "imageUrl", "Image URL", "Image", "Image link", "Main Image", "Image1", "Image 1") ||
+  undefined;
 
-    // core
-    p.name        = pick(row, "name", "Name", "Product");
-    p.code        = pick(row, "code", "SKU", "sku", "Item Code");
-    p.description = pick(row, "description", "Description", "Desc");
-    p.category    = pick(row, "category", "Category", "Cat");
+if (rawImg) {
+  const sameOrigin = rawImg.startsWith("/") || /^https?:\/\/[^/]*pacificbathroom/i.test(rawImg);
+  // Keep original for reference
+  p.imageUrl = rawImg;
+  // Prefer same-origin for UI + PPTX (proxy if needed)
+  p.imageProxied = sameOrigin ? rawImg : `/api/img?url=${encodeURIComponent(rawImg)}`;
+}
 
-    // images / links
-    p.imageProxied = pick(row, "imageProxied", "imageUrl", "Image", "Image URL");
-    p.url          = pick(row, "url", "Product URL", "Link");
 
     // bullets
     const bulletsRaw = pick(row, "specsBullets", "Bullets", "Features") || "";
