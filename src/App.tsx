@@ -3,6 +3,40 @@ import { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
 import { exportPptx } from "./lib/exportPptx";
+import React from "react";
+import { SettingsProvider, useSettings } from "./state/SettingsProvider";
+import ContactProjectForm from "./components/ContactProjectForm";
+
+function CoverPreview() {
+   // example: show that your data is available to other features like export
+  const { contact, project } = useSettings();
+  return (
+    <div className="mt-6 p-4 border rounded">
+      <h4 className="font-semibold mb-2">Cover Preview (data available to export)</h4>
+      <div className="text-sm grid grid-cols-2 gap-2">
+        <div><strong>Contact:</strong> {contact.contactName} ({contact.title})</div>
+        <div><strong>Email:</strong> {contact.email}</div>
+        <div><strong>Phone:</strong> {contact.phone || "—"}</div>
+        <div><strong>Company:</strong> {contact.company || "—"}</div>
+        <div><strong>Project:</strong> {project.projectName || "—"}</div>
+        <div><strong>Client:</strong> {project.clientName || "—"}</div>
+        <div><strong>Date:</strong> {project.presentationDate || "—"}</div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <SettingsProvider>
+      <main className="max-w-5xl mx-auto p-6">
+        <h1 className="text-2xl font-bold mb-4">Project Setup</h1>
+        <ContactProjectForm />
+        <CoverPreview />
+      </main>
+    </SettingsProvider>
+  );
+}
 
 // tiny helpers
 const includes = (h: string, n: string) => h.toLowerCase().includes(n.toLowerCase());
