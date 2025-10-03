@@ -1,163 +1,104 @@
+// src/lib/products.ts
 import type { Product } from "../types";
 
-type Row = Record<string, any>;
+type Row = Record<string, string | undefined>;
 
-/** url slug -> Title Case */
-function nameFromUrl(u: string): string {
-  try {
-    const path = decodeURIComponent(new URL(u, "https://x.example").pathname);
-    const last = path.split("/").filter(Boolean).pop() || "";
-    return last
-      .replace(/[-_]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\b\w/g, (m) => m.toUpperCase());
-  } catch {
-    return u || "—";
-  }
-}
-
+/** Safe getter: return first non-empty value among the given keys */
 const pick = (row: Row, ...keys: string[]) => {
   for (const k of keys) {
-    const v = row[k];
-    if (v && String(v).trim()) return String(v).trim();
+    if (k in row) {
+      const v = row[k];
+      if (v != null && String(v).trim() !== "") return String(v).trim();
+    }
   }
   return undefined;
 };
 
-/** parse SpecsBullets from string (pipes/newlines/•/hyphens) or array */
-function parseBullets(raw?: string | string[]): string[] {
-  if (!raw) return [];
-  const s = Array.isArray(raw) ? raw.join("\n") : String(raw);
-  const normalized = s
-    .replace(/[\u2022•]\s*/g, "\n")         // "• " -> newline
-    .replace(/(?:^|\s)[\-–—]\s+/g, "\n")    // "- " -> newline
-    .replace(/\r/g, "")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-
-  return normalized
-    .split(/\n|[|;]+/g)
-    .map((x) => x.replace(/^[\u2022•\-–—\s]+/, "").trim())
+const splitBullets = (s?: string) =>
+  (s ?? "")
+    .split(/\r?\n|•/g)
+    .map((x) => x.trim())
     .filter(Boolean);
-}
 
-const proxied = (url?: string | null) =>
-  url
-    ? /^\/(specs|branding)\//.test(url)
-      ? url
-      : `/api/file-proxy?url=${encodeURIComponent(url)}`
-    : undefined;
-
-const proxiedPdf = (url?: string | null) =>
-  url
-    ? url.startsWith("/specs/")
-      ? url
-      : `/api/pdf-proxy?url=${encodeURIComponent(url)}`
-    : undefined;
-
-/** one row -> Product */
-function normalizeRow(r: Row): Product {
-  const url = String(r.Url || "").trim();
-  let name = String(r.Name || "").trim();
-  if (!name || /^https?:\/\//i.test(name)) name = url ? nameFromUrl(url) : name || "—";
-
-  const pdfKey = String(r.PdfKey || "").trim();
-  const pdfUrl =
-    String(r.PdfURL || "").trim() ||
-    (pdfKey ? `/specs/${pdfKey}.pdf` : "");
-  // after you build each `product` from a row:
-const anyProd = p as any; // <-- use the variable you actually declared for the product
-anyProd.pdfUrl =
-  anyProd.pdfUrl ||
-  anyProd.specPdf ||
-  anyProd.specPDF ||
-  anyProd.spec ||
-  anyProd.specSheet ||
-  anyProd["Spec PDF"] ||
-  anyProd["Spec sheet"] ||
-  anyProd["Spec sheet (PDF)"] ||
-  anyProd["PDF"] ||
-  undefined;
-
-anyProd.specPreviewUrl =
-  anyProd.specPreviewUrl ||
-  anyProd["Spec preview"] ||
-  anyProd["Spec Image"] ||
-  undefined;
-
-
-// Optional explicit preview image column
-anyProd.specPreviewUrl = anyProd.specPreviewUrl || anyProd["Spec preview"] || anyProd["Spec Image"] || undefined;
-
-
-  const img = String(r.ImageURL || r.Image || "").trim();
-
-  return {
-    code: String(r.Code || "").trim(),
-    name,
-    url: url || undefined,
-    imageUrl: img || undefined,
-    imageProxied: proxied(img),
-    description: String(r.Description || "").trim(),
-    specsBullets: parseBullets(r.SpecsBullets),
-    pdfUrl: proxiedPdf(pdfUrl),
-    pdfKey,
-    category: String(r.Category || "").trim(),
-  };
-}
-
-/** Robustly read either an array or { rows: [...] } or { values: [...] } */
-export async function fetchProducts(range: string): Promise<Product[]> {
-  const res = await fetch(`/api/sheets?range=${encodeURIComponent(range)}`);
-  if (!res.ok) throw new Error(`sheets ${res.status}`);
-
-  const payload: any = await res.json();
-
-  let rows: Row[] = [];
-  if (Array.isArray(payload)) rows = payload as Row[];
-  else if (Array.isArray(payload?.rows)) rows = payload.rows as Row[];
-  else if (Array.isArray(payload?.data)) rows = payload.data as Row[];
-  else if (Array.isArray(payload?.values)) {
-    const [hdr = [], ...vals] = payload.values as any[][];
-    rows = vals.map((arr) =>
-      Object.fromEntries(hdr.map((h: string, i: number) => [h, arr[i]]))
-    );
-  } else {
-    throw new Error("Sheets API did not return rows");
+/** Convert various sheet API shapes into array of {key:value} rows */
+function coerceRows(payload: any): Row[] {
+  // 1) Already rows as [{...}, {...}]
+  if (payload && Array.isArray(payload.rows) && typeof payload.rows[0] === "object") {
+    return payload.rows as Row[];
   }
 
-  return rows.map(normalizeRow).filter((p) => p.name || p.code);
+  // 2) Google Sheets-style "values": [ [header...], [row...], ... ]
+  if (payload && Array.isArray(payload.values) && Array.isArray(payload.values[0])) {
+    const [header, ...rest] = payload.values as string[][];
+    const keys = header.map((h) => String(h || "").trim());
+    return rest.map((arr) => {
+      const r: Row = {};
+      for (let i = 0; i < keys.length; i++) r[keys[i]] = arr[i];
+      return r;
+    });
+  }
+
+  // 3) Fallback
+  return [];
 }
-return rows.map((row) => {
+
+/**
+ * Load products from your sheet-backed API.
+ * Expects `/api/sheet?range=...` to return either:
+ *  - { rows: Array<Record<string,string>> }  OR
+ *  - { values: string[][] } where first row is headers
+ */
+export async function fetchProducts(range: string): Promise<Product[]> {
+  const res = await fetch(`/api/sheet?range=${encodeURIComponent(range)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`fetchProducts failed: ${res.status}`);
+  const payload = await res.json();
+  const rows = coerceRows(payload);
+
+  const out: Product[] = rows.map((row) => {
     const p: any = {} as Product;
 
+    // core
     p.name        = pick(row, "name", "Name", "Product");
     p.code        = pick(row, "code", "SKU", "sku", "Item Code");
     p.description = pick(row, "description", "Description", "Desc");
     p.category    = pick(row, "category", "Category", "Cat");
 
     // images / links
-    p.imageProxied    = pick(row, "imageProxied", "imageUrl", "Image", "Image URL");
-    p.url             = pick(row, "url", "Product URL", "Link");
+    p.imageProxied = pick(row, "imageProxied", "imageUrl", "Image", "Image URL");
+    p.url          = pick(row, "url", "Product URL", "Link");
 
     // bullets
-    const bulletsRaw  = pick(row, "specsBullets", "Bullets", "Features") || "";
-    p.specsBullets    = bulletsRaw
-      .split(/\r?\n|•/).map((s) => s.trim()).filter(Boolean);
+    const bulletsRaw = pick(row, "specsBullets", "Bullets", "Features") || "";
+    p.specsBullets   = splitBullets(bulletsRaw);
 
-    // PDF + preview (coalesced keys)
+    // Accept many possible column names for spec PDF URL
     p.pdfUrl = pick(
       row,
-      "pdfUrl", "specPdf", "specPDF", "spec", "specSheet",
-      "Spec PDF", "Spec sheet", "Spec sheet (PDF)", "PDF"
+      "pdfUrl",
+      "specPdf",
+      "specPDF",
+      "spec",
+      "specSheet",
+      "Spec PDF",
+      "Spec sheet",
+      "Spec sheet (PDF)",
+      "PDF"
     );
 
+    // Optional explicit preview image (used by exportPptx)
     p.specPreviewUrl = pick(
       row,
-      "specPreviewUrl", "Spec preview", "Spec Image", "Spec Preview URL"
+      "specPreviewUrl",
+      "Spec preview",
+      "Spec Image",
+      "Spec Preview URL"
     );
+
+    // Older cards might read (p as any).imageUrl:
+    if (!p.imageProxied) p.imageUrl = pick(row, "imageUrl", "Image", "Image URL");
 
     return p as Product;
   });
+
+  return out;
 }
