@@ -288,14 +288,48 @@ export async function exportPptx({
     }
 
     // ---- Spec slide (try when we have a PDF URL)
-    const pdfUrl: string | undefined = (p as any).pdfUrl;
-    if (pdfUrl) {
-      const s2 = pptx.addSlide();
-      s2.addText(`${p.name || "—"} — Specifications`, {
-        x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
-      });
+// ---- Spec slide (robust) ----
+function coalescePdfUrl(p: any): string | undefined {
+  return (
+    p.pdfUrl ||
+    p.specPdf ||
+    p.specPDF ||
+    p.spec ||
+    p.specSheet ||
+    p["Spec PDF"] ||
+    p["Spec sheet"] ||
+    p["Spec sheet (PDF)"] ||
+    p["PDF"] ||
+    undefined
+  );
+}
 
-      let addedImage = false;
+for (const p of items) {
+  // ...existing "product" slide code above...
+
+  const pdfUrl = coalescePdfUrl(p);
+  if (pdfUrl) {
+    const s2 = pptx.addSlide();
+    s2.addText(`${p.name || "—"} — Specifications`, {
+      x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
+    });
+
+    // 1) Prefer an explicit preview image if provided on the product
+    //    e.g. p.specPreviewUrl or p.imagePreviewUrl
+    let addedImage = false;
+    const explicitPreview: string | undefined =
+      (p as any).specPreviewUrl || (p as any).imagePreviewUrl;
+
+    try {
+      if (explicitPreview) {
+        const prevData = await urlToDataUrl(explicitPreview);
+        await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
+        addedImage = true;
+      }
+    } catch { /* ignore and try auto-discovery */ }
+
+    // 2) Otherwise, try to auto-discover an image beside /public/specs
+    if (!addedImage) {
       try {
         const previewUrl = await findSpecPreviewUrl(pdfUrl, p.code);
         if (previewUrl) {
@@ -303,7 +337,29 @@ export async function exportPptx({
           await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
           addedImage = true;
         }
-      } catch { /* fall back */ }
+      } catch { /* fall through */ }
+    }
+
+    // Always add a clickable link to the PDF
+    try {
+      s2.addText("Open Spec PDF", {
+        x: 7.6, y: 0.45, w: 1.9, h: 0.4,
+        fontSize: 14, color: "0A66C2", underline: true,
+        hyperlink: { url: pdfUrl },
+        align: "right",
+      });
+    } catch { /* ignore */ }
+
+    if (!addedImage) {
+      s2.addText(
+        "Spec preview image not found.\n" +
+          "Tip: add PNG/JPG to /public/specs using the PDF’s basename (e.g. PMB420.png),\n" +
+          "or set product.specPreviewUrl.",
+        { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
+      );
+    }
+  }
+}
 
       // Always add a clickable link to the source PDF (top-right under title)
       try {
