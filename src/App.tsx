@@ -17,7 +17,8 @@ const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 /** Convert Drive links to direct URLs */
 function toDirectImageUrl(u?: string) {
   if (!u) return u;
-  const m = u.match(/drive\\.google\\.com\\/file\\/d\\/([^/]+)/i);
+  // https://drive.google.com/file/d/<ID>/view?usp=sharing -> direct file
+  const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
   if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
   return u;
 }
@@ -47,7 +48,7 @@ function augmentProductImages(p: Product): Product {
   const raw = detectImageUrl(p);
   const direct = toDirectImageUrl(raw);
   const imageProxied =
-    direct && /^https?:\\/\\//i.test(direct)
+    direct && /^https?:\/\//i.test(direct)
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
   return { ...p, imageProxied };
