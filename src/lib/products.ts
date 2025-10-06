@@ -78,6 +78,7 @@ const pdfUrl = pick(
   "Specifications", "Specification", "Specs PDF"
 );
 
+
   const rawImg = findAnyImageUrl(row);
   const direct = toDirectImageUrl(rawImg);
 
