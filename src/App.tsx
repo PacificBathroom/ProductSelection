@@ -109,47 +109,45 @@ function MainProductPage() {
     return a;
   }, [items, q, cat, sort]);
 
-  /** Export PowerPoint */
   async function onExportClick() {
-    const list = selectedList.length ? selectedList : visible;
-    if (!list.length) {
-      alert("No products to export.");
-      return;
-    }
-    try {
-      await exportPptx({
-        projectName: project.projectName || "Product Presentation",
-        clientName: project.clientName || "",
-        contactName: `${contact.contactName}${
-          contact.title ? ", " + contact.title : ""
-        }`,
-        email: contact.email,
-        phone: contact.phone,
-        date: project.presentationDate || "",
-        items: list,
-        coverImageUrls: ["/branding/cover.jpg"],
-        backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
-      });
-
-      // ✅ clear selections, filters, and form data after export
-      setSelected({});
-      setQ("");
-      setCat("All");
-      setSort("sheet");
-
-      try {
-        localStorage.removeItem("selectedProductIds");
-        localStorage.removeItem("contact");
-        localStorage.removeItem("project");
-      } catch {}
-
-      alert("✅ Export complete! Form and selections cleared.");
-      window.location.reload();
-    } catch (e: any) {
-      console.error("Export failed", e);
-      alert("Export failed: " + (e?.message || e));
-    }
+  const list = selectedList.length ? selectedList : visible;
+  if (!list.length) {
+    alert("No products to export.");
+    return;
   }
+
+  try {
+    await exportPptx({
+      projectName: project.projectName || "Product Presentation",
+      clientName: project.clientName || "",
+      contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+      email: contact.email,
+      phone: contact.phone,
+      date: project.presentationDate || "",
+      items: list,
+      coverImageUrls: ["/branding/cover.jpg"],
+      backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
+    });
+
+    // ✅ Clear selections/filters
+    setSelected({});
+    setQ("");
+    setCat("All");
+    setSort("sheet");
+    try { localStorage.removeItem("selectedProductIds"); } catch {}
+
+    // ✅ Clear form persisted by SettingsBridge/Provider
+    // If your provider exposes resetAll(), prefer:  resetAll();
+    // Fallback: wipe the storage key that SettingsBridge uses (commonly "settings")
+    try { localStorage.removeItem("settings"); } catch {}
+
+    // Force UI to re-mount with blank form
+    window.location.reload();
+  } catch (e: any) {
+    console.error("Export failed", e);
+    alert("Export failed: " + (e?.message || e));
+  }
+}
 
   return (
     <>
