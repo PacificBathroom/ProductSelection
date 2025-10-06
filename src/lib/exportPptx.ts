@@ -133,7 +133,7 @@ function fileNameFrom(options: ExportOptions): string {
 
 /* ---------------------------- Slides ----------------------------- */
 
-async function addCoverSlide(pptx: PptxGenJS, opt: ExportOptions) {
+async function addCoverSlide(pptx: any, opt: ExportOptions) {
   const slide = pptx.addSlide();
 
   // Background image (first that loads)
@@ -175,7 +175,7 @@ async function addCoverSlide(pptx: PptxGenJS, opt: ExportOptions) {
   });
 }
 
-async function addProductSlide(pptx: PptxGenJS, p: Product) {
+async function addProductSlide(pptx: any, p: Product) {
   const slide = pptx.addSlide();
 
   // Title
@@ -250,7 +250,7 @@ async function addProductSlide(pptx: PptxGenJS, p: Product) {
   }
 }
 
-async function addBackSlides(pptx: PptxGenJS, urls: string[] | undefined) {
+async function addBackSlides(pptx: any, urls: string[] | undefined) {
   if (!urls?.length) return;
   for (const u of urls) {
     const data = await urlToDataUrl(u);
@@ -277,4 +277,18 @@ export async function exportSelectionPptx(products: Product[], options: ExportOp
 
   const name = options.fileName || fileNameFrom(options);
   await pptx.writeFile({ fileName: name });
+}
+
+// Backwards-compatible wrapper so existing imports still work:
+export async function exportPptx(arg1: any, arg2?: ExportOptions) {
+  // Signature A: exportPptx(products, options)
+  if (Array.isArray(arg1)) {
+    return exportSelectionPptx(arg1 as Product[], arg2);
+  }
+  // Signature B: exportPptx({ items, ...coverOptions })
+  if (arg1 && Array.isArray(arg1.items)) {
+    const { items, ...rest } = arg1 as { items: Product[] } & ExportOptions;
+    return exportSelectionPptx(items, rest);
+  }
+  throw new Error("exportPptx: invalid arguments. Pass (products, options) or ({ items, ...options }).");
 }
