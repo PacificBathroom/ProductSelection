@@ -143,57 +143,68 @@ export async function exportPptx({
     });
   }
 
-  /* PRODUCT SLIDES */
-  for (const p of items) {
-    const s = pptx.addSlide();
+ /* PRODUCT SLIDES */
+for (const p of items) {
+  const s = pptx.addSlide();
 
-    // 1) image (top area)
-    const imgUrl = p.imageProxied || p.imageUrl || p.image;
-    if (imgUrl) {
-      try {
-        const imgData = await urlToDataUrl(imgUrl);
-        if (imgData) {
-          await addContainedImage(s, imgData, { x: 0.5, y: 0.5, w: 9.0, h: 3.2 });
-        }
-      } catch {}
-    }
+  // 1) image (top area)
+  const imgUrl = p.imageProxied || p.imageUrl || p.image;
+  if (imgUrl) {
+    try {
+      const imgData = await urlToDataUrl(imgUrl);
+      if (imgData) {
+        await addContainedImage(s, imgData, { x: 0.5, y: 0.5, w: 9.0, h: 3.2 });
+      }
+    } catch {}
+  }
 
-    // 2) title + code
-    s.addText(p.name || p.code || "Untitled Product", {
-      x: 0.5, y: 3.9, w: 9.0, h: 0.6, fontSize: 24, bold: true, color: "003366",
+  // 2) title + code
+  s.addText(p.name || p.code || "Untitled Product", {
+    x: 0.5, y: 3.9, w: 9.0, h: 0.6, fontSize: 24, bold: true, color: "003366",
+  });
+  if (p.code) {
+    s.addText(`Code: ${p.code}`, {
+      x: 0.5, y: 4.55, w: 9.0, h: 0.4, fontSize: 14, color: "444444",
     });
-    if (p.code) {
-      s.addText(`Code: ${p.code}`, {
-        x: 0.5, y: 4.55, w: 9.0, h: 0.4, fontSize: 14, color: "444444",
-      });
-    }
+  }
 
-    // 3) description (left column)
-    if (p.description) {
-      s.addText(p.description, {
-        x: 0.5, y: 5.05, w: 5.2, h: 1.3,
-        fontSize: 14, color: "444444",
-        lineSpacing: 20, valign: "top", shrinkText: true,
-      });
-    }
+  // 3) description (left column) — bigger box, shrink + top-align
+  if (p.description) {
+    s.addText(p.description, {
+      x: 0.5, y: 5.05, w: 5.2, h: 1.7,
+      fontSize: 14, color: "444444",
+      lineSpacing: 20, valign: "top", shrinkText: true,
+    });
+  }
 
-    // 4) bullets (right column) – real bullets
-    if (p.specsBullets && p.specsBullets.length) {
-      s.addText(p.specsBullets.slice(0, 6), {
-        x: 5.9, y: 5.05, w: 3.6, h: 1.3,
-        fontSize: 14, bullet: true, lineSpacing: 20, valign: "top",
-      });
-    }
+  // 4) bullets (right column) — try real bullets; fallback to prefixed text
+  if (p.specsBullets && p.specsBullets.length) {
+    const itemsArr = p.specsBullets.slice(0, 8).map(String).filter(Boolean);
 
-    // 5) spec link
-    if (p.pdfUrl) {
-      s.addText("Spec Sheet (PDF)", {
-        x: 0.5, y: 6.45, w: 3.0, h: 0.35,
-        fontSize: 12, color: "1155CC",
-        hyperlink: { url: p.pdfUrl },
+    // Try native bullets first
+    try {
+      s.addText(itemsArr, {
+        x: 5.9, y: 5.05, w: 3.6, h: 1.7,
+        fontSize: 14, bullet: true, lineSpacing: 20, valign: "top", shrinkText: true,
+      });
+    } catch {
+      // Fallback: manual bullets
+      s.addText(itemsArr.map(b => `• ${b}`).join("\n"), {
+        x: 5.9, y: 5.05, w: 3.6, h: 1.7,
+        fontSize: 14, lineSpacing: 20, valign: "top", shrinkText: true,
       });
     }
   }
+
+  // 5) spec link (fixed position)
+  if (p.pdfUrl) {
+    s.addText("Spec Sheet (PDF)", {
+      x: 0.5, y: 6.45, w: 3.0, h: 0.35,
+      fontSize: 12, color: "1155CC",
+      hyperlink: { url: p.pdfUrl },
+    });
+  }
+}
 
   /* SPEC SLIDES (optional preview next to PDF) */
   for (const p of items) {
