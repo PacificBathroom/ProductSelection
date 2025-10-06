@@ -26,14 +26,18 @@ async function urlToDataUrl(url: string): Promise<string | undefined> {
 }
 
 export async function exportPptx({
-  projectName,
-  clientName,
-  contactName,
-  email,
-  phone,
-  date,
+  projectName = "Product Presentation",
+  clientName = "",
+  contactName = "",
+  company = "",
+  email = "",
+  phone = "",
+  date = "",
   items,
-}: {
+  coverImageUrls = ["/branding/cover.jpg"],
+  backImageUrls = ["/branding/warranty.jpg", "/branding/service.jpg"],
+}: ExportArgs & { coverImageUrls?: string[]; backImageUrls?: string[] }) {
+
   projectName: string;
   clientName?: string;
   contactName?: string;
