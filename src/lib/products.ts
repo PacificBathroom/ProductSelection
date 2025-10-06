@@ -71,7 +71,12 @@ function mapRow(row: Row): Product {
   const description = pick(row, "Description", "Desc", "Blurb");
   const category = pick(row, "Category", "Categories");
   const url = pick(row, "URL", "Link", "Page");
-  const pdfUrl = pick(row, "PDF", "Spec", "Spec Sheet", "Spec URL");
+const pdfUrl = pick(
+  row,
+  "PDF", "Spec", "Spec URL",
+  "Spec Sheet", "Spec sheet", "Spec sheet (PDF)",
+  "Specifications", "Specification", "Specs PDF"
+);
 
   const rawImg = findAnyImageUrl(row);
   const direct = toDirectImageUrl(rawImg);
@@ -81,6 +86,7 @@ function mapRow(row: Row): Product {
     direct && /^https?:\/\//i.test(direct)
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
+  
 
   const specsBullets = (pick(row, "Bullets", "Specs", "Features") || "")
     .split(/\r?\n|•/g)
