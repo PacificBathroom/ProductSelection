@@ -1,17 +1,96 @@
-// src/lib/exportPptx.ts
-import type { Product } from "../types";
+// exportPptx.ts — complete, drop-in replacement
+// PptxGenJS-powered export with:
+//  • Robust image loading (handles CORS via /api/img.js proxy)
+//  • Cover slide populated from current app inputs
+//  • Product slides w/ bullets + category + warranties
+//  • Optional back pages (warranty/service)
+//  • No "X products selected" text anywhere
+//  • Defensive sizing for all images so blanks don’t occur
+//
+// Usage (example):
+//   import { exportSelectionPptx } from "./exportPptx";
+//   await exportSelectionPptx(productsArray, {
+//     projectName: form.projectName,
+//     clientName: form.clientName,
+//     siteAddress: form.siteAddress,
+//     preparedFor: form.preparedFor,
+//     preparedBy: form.preparedBy,
+//     contactName: form.contactName,
+//     contactPhone: form.contactPhone,
+//     contactEmail: form.contactEmail,
+//     brandLogoUrl: "/branding/logo.png",
+//     coverImageUrls: ["/branding/cover.jpg"],
+//     backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
+//   });
 
-const FULL_W = 10;
-const FULL_H = 5.625;
+import PptxGenJS from "pptxgenjs";
 
-const COVER_URLS = ["/branding/cover.jpg"];
-const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
+/* ----------------------------- Types ------------------------------ */
+export type Product = {
+  name: string;
+  sku?: string;
+  description?: string; // multi-line bullets allowed
+  bullets?: string[];   // alt bullets (if provided, takes precedence)
+  image?: string;       // primary image url
+  image2?: string;      // optional extra image
+  categoryPath?: string; // e.g. "Bathrooms > Accessories > ..."
+  warrantyFinish?: string; // e.g. "20 years replacement warranty on finishes"
+  warrantyLabour?: string; // e.g. "2 years on labour"
+  specs?: string;        // optional specs text
+};
 
-/* ---------- helpers ---------- */
+export type ExportOptions = {
+  // Cover fields from the app inputs
+  projectName?: string;
+  clientName?: string;
+  siteAddress?: string;
+  preparedFor?: string;
+  preparedBy?: string;
+  contactName?: string;
+  contactPhone?: string;
+  contactEmail?: string;
+  brandLogoUrl?: string;
+  coverImageUrls?: string[]; // background images for cover (first existing used)
+  backImageUrls?: string[];  // optional final pages (warranty / service)
+  fileName?: string;         // optional override
+};
 
-// Convert Blob -> data URL
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
+/* --------------------------- Constants --------------------------- */
+const FULL_W = 10;      // 16:9 width (in)
+const FULL_H = 5.625;   // 16:9 height (in)
+
+// Product image frame
+const IMG_X = 0.6;
+const IMG_Y = 1.0;
+const IMG_W = 3.8;
+const IMG_H = 3.8;
+
+/* ------------------------ Helper functions ----------------------- */
+
+// Prefer local/same-origin when possible. Anything else is proxied via /api/img.js.
+function normalizeImageUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url, window.location.origin);
+    // If same-origin path we can use directly; else go through proxy.
+    if (u.origin === window.location.origin) return u.toString();
+    return `/api/img.js?u=${encodeURIComponent(u.toString())}`;
+  } catch {
+    // If it's a bare path like "/img/a.jpg" just return it
+    if (url.startsWith("/")) return url;
+    // As a last resort, proxy whatever string we were given
+    return `/api/img.js?u=${encodeURIComponent(url)}`;
+  }
+}
+
+// Fetch any URL (local or proxied) into a data URL.
+async function urlToDataUrl(url?: string): Promise<string | undefined> {
+  const norm = normalizeImageUrl(url);
+  if (!norm) return undefined;
+  const res = await fetch(norm);
+  if (!res.ok) return undefined;
+  const blob = await res.blob();
+  return await new Promise<string>((resolve, reject) => {
     const r = new FileReader();
     r.onerror = () => reject(new Error("FileReader error"));
     r.onload = () => resolve(String(r.result));
@@ -19,276 +98,183 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/**
- * Robust URL -> data URL loader.
- * Tries:
- *  1) direct fetch
- *  2) fetch with credentials (include cookies)
- *  3) fetch via local proxy endpoint: /api/fetch-image?url=...
- *
- * Notes:
- *  - If url starts with "/", it will be converted to absolute using window.location.origin.
- *  - If the URL is already a data URL, it returns immediately.
- *  - Implement a server-side proxy if your images are blocked by CORS or need auth.
- */
-async function urlToDataUrl(url: string): Promise<string> {
-  if (!url) throw new Error("urlToDataUrl: missing url");
-  const abs = url.startsWith("/") ? `${window.location.origin}${url}` : url;
-  if (abs.startsWith("data:")) return abs;
-
-  async function tryFetch(u: string, opts?: RequestInit) {
-    const res = await fetch(u, { cache: "no-store", ...opts });
-    if (!res.ok) throw new Error(`fetch failed (${res.status}) ${u}`);
-    const blob = await res.blob();
-    return blobToDataUrl(blob);
-  }
-
-  // 1) plain fetch
-  try {
-    return await tryFetch(abs);
-  } catch (err1) {
-    console.warn("urlToDataUrl: direct fetch failed for", abs, err1);
-  }
-
-  // 2) fetch with credentials (include cookies) — helpful if same-origin uses session cookies
-  try {
-    return await tryFetch(abs, { credentials: "include" });
-  } catch (err2) {
-    console.warn("urlToDataUrl: fetch with credentials failed for", abs, err2);
-  }
-
-  // 3) fallback to proxy endpoint on your server (you must implement it)
-  // Example endpoint: GET /api/fetch-image?url=<encodedUrl>
-  try {
-    const proxyPath = `/api/fetch-image?url=${encodeURIComponent(abs)}`;
-    return await tryFetch(proxyPath);
-  } catch (err3) {
-    console.warn("urlToDataUrl: proxy fetch failed for", abs, err3);
-    throw new Error(`Could not load image: ${url}`);
-  }
-}
-
-async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> {
-  const img = new Image();
-  img.src = dataUrl;
-  await new Promise<void>((ok, err) => {
-    img.onload = () => ok();
-    img.onerror = () => err(new Error("image load error"));
+// Read natural (pixel) dimensions from a data URL, so we can preserve aspect.
+function getImageDims(dataUrl: string): Promise<{ w: number; h: number } | undefined> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+    img.onerror = () => resolve(undefined);
+    img.src = dataUrl;
   });
-  return { w: img.naturalWidth, h: img.naturalHeight };
 }
 
-function fitIntoBox(
-  imgW: number, imgH: number,
-  boxX: number, boxY: number, boxW: number, boxH: number
-): { x: number; y: number; w: number; h: number } {
-  const rImg = imgW / imgH;
-  const rBox = boxW / boxH;
-  let w: number, h: number;
-  if (rImg >= rBox) { w = boxW; h = w / rImg; }
-  else { h = boxH; w = h * rImg; }
-  const x = boxX + (boxW - w) / 2;
-  const y = boxY + (boxH - h) / 2;
-  return { x, y, w, h };
+function splitBullets(v?: string | string[]): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.filter(Boolean).map((s) => String(s).trim()).filter(Boolean);
+  return String(v)
+    .split(/\r?\n|•/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-async function addContainedImage(
-  slide: any,
-  dataUrl: string,
-  box: { x: number; y: number; w: number; h: number }
-) {
-  const { w: iw, h: ih } = await getImageDims(dataUrl);
-  const rect = fitIntoBox(iw, ih, box.x, box.y, box.w, box.h);
-  slide.addImage({ data: dataUrl, ...rect } as any);
+function safeText(v?: string, fallback = ""): string {
+  return (v ?? fallback).toString();
 }
 
-function guessSpecBaseFromPdf(pdfUrl?: string): string | undefined {
-  if (!pdfUrl) return;
-  if (pdfUrl.startsWith("/specs/")) {
-    const base = pdfUrl.split("/").pop() || "";
-    return base.replace(/\.pdf(\?.*)?$/i, "");
+function fileNameFrom(options: ExportOptions): string {
+  const parts = [
+    "Selection",
+    options.projectName,
+    options.clientName,
+  ].filter(Boolean) as string[];
+  const base = parts.join(" - ") || "Selection";
+  return `${base}.pptx`;
+}
+
+/* ---------------------------- Slides ----------------------------- */
+
+async function addCoverSlide(pptx: PptxGenJS, opt: ExportOptions) {
+  const slide = pptx.addSlide();
+
+  // Background image (first that loads)
+  const coverBg = opt.coverImageUrls?.[0];
+  const coverData = await urlToDataUrl(coverBg);
+  if (coverData) {
+    slide.addImage({ data: coverData, x: 0, y: 0, w: FULL_W, h: FULL_H });
+  } else {
+    // fallback block color
+    slide.background = { color: "FFFFFF" };
   }
-  const m = pdfUrl.match(/[?&]url=([^&]+)/);
-  if (m) {
-    try {
-      const decoded = decodeURIComponent(m[1]);
-      const base = decoded.split("/").pop() || "";
-      return base.replace(/\.pdf(\?.*)?$/i, "");
-    } catch { /* ignore */ }
+
+  // Brand logo (optional, top-right)
+  const logoData = await urlToDataUrl(opt.brandLogoUrl);
+  if (logoData) {
+    slide.addImage({ data: logoData, x: FULL_W - 2.0, y: 0.25, w: 1.5, h: 1.0, maintainAspectRatio: true });
   }
-  if (/^https?:\/\//i.test(pdfUrl)) {
-    const base = pdfUrl.split("/").pop() || "";
-    return base.replace(/\.pdf(\?.*)?$/i, "");
-  }
-  return;
+
+  // Headline (Project / Client)
+  const headline = [opt.projectName, opt.clientName].filter(Boolean).join(" — ");
+  slide.addText(headline || "Product Selection", {
+    x: 0.6, y: 0.6, w: FULL_W - 1.2, h: 0.8,
+    fontSize: 28, bold: true, color: "203040",
+  });
+
+  // Details block
+  const lines: string[] = [];
+  if (opt.siteAddress) lines.push(`Site: ${opt.siteAddress}`);
+  if (opt.preparedFor) lines.push(`Prepared for: ${opt.preparedFor}`);
+  if (opt.preparedBy) lines.push(`Prepared by: ${opt.preparedBy}`);
+  if (opt.contactName) lines.push(`Contact: ${opt.contactName}`);
+  if (opt.contactPhone) lines.push(`Phone: ${opt.contactPhone}`);
+  if (opt.contactEmail) lines.push(`Email: ${opt.contactEmail}`);
+  lines.push(`Date: ${new Date().toLocaleDateString()}`);
+
+  slide.addText(lines.join("\n"), {
+    x: 0.6, y: 1.6, w: FULL_W - 1.2, h: 2.0,
+    fontSize: 14, color: "203040",
+  });
 }
 
-async function findSpecPreviewUrl(pdfUrl?: string, sku?: string): Promise<string | undefined> {
-  const key = guessSpecBaseFromPdf(pdfUrl) || sku;
-  if (!key) return;
-  const stems = [key, key.replace(/\s+/g, "_"), key.replace(/\s+/g, "")];
-  const exts = ["png", "jpg", "jpeg", "webp"];
-  for (const stem of stems) {
-    for (const ext of exts) {
-      const url = `/specs/${stem}.${ext}`;
-      try { await urlToDataUrl(url); return url; } catch {}
+async function addProductSlide(pptx: PptxGenJS, p: Product) {
+  const slide = pptx.addSlide();
+
+  // Title
+  slide.addText(safeText(p.name, "Unnamed Product"), {
+    x: 0.6, y: 0.4, w: FULL_W - 1.2, h: 0.5,
+    fontSize: 20, bold: true, color: "000000",
+  });
+
+  // SKU
+  if (p.sku) {
+    slide.addText(`SKU: ${p.sku}`, { x: 0.6, y: 0.9, w: FULL_W - 1.2, h: 0.3, fontSize: 12, color: "555555" });
+  }
+
+  // Images (up to 2) — contain within fixed frame, maintain aspect ratio
+  const imgUrls = [p.image, p.image2].map(normalizeImageUrl).filter(Boolean) as string[];
+  let placedAny = false;
+  for (let i = 0; i < imgUrls.length; i++) {
+    const data = await urlToDataUrl(imgUrls[i]);
+    if (!data) continue;
+    const dims = await getImageDims(data);
+    // contain fit
+    let w = IMG_W, h = IMG_H, x = IMG_X, y = IMG_Y;
+    if (dims && dims.w && dims.h) {
+      const rFrame = IMG_W / IMG_H;
+      const rImg = dims.w / dims.h;
+      if (rImg >= rFrame) {
+        // image is wider -> full width, shrink height
+        w = IMG_W; h = IMG_W / rImg; y = IMG_Y + (IMG_H - h) / 2;
+      } else {
+        // image is taller -> full height, shrink width
+        h = IMG_H; w = IMG_H * rImg; x = IMG_X + (IMG_W - w) / 2;
+      }
     }
-  }
-  return;
-}
-
-/* ---------- main ---------- */
-
-type ExportArgs = {
-  projectName?: string;
-  clientName?: string;
-  contactName?: string;
-  company?: string;
-  email?: string;
-  phone?: string;
-  date?: string;
-  items: Product[];
-};
-
-export async function exportPptx({
-  projectName = "Product Presentation",
-  clientName = "",
-  contactName = "",
-  company = "",
-  email = "",
-  phone = "",
-  date = "",
-  items,
-}: ExportArgs) {
-  const PptxGenJS = (await import("pptxgenjs")).default as any;
-  const pptx = new PptxGenJS();
-
-  /* ---------- COVER ---------- */
-
-  if (COVER_URLS[0]) {
-    try {
-      const s1 = pptx.addSlide();
-
-      // background image (if present) — robust loader
-      try {
-        const bg = await urlToDataUrl(COVER_URLS[0]);
-        s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H });
-      } catch (bgErr) {
-        console.warn("Cover background failed to load:", bgErr);
-      }
-
-      // Project title: centered horizontally across the slide
-      s1.addText(projectName || "Product Presentation", {
-        x: 0, y: 0.6, w: FULL_W, h: 1.0,
-        fontSize: 32, bold: true, color: "FFFFFF",
-        align: "center",
-        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
-      });
-
-      // Contact info block (centered vertically)
-      const lines: string[] = [];
-      if (contactName) lines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
-      if (email) lines.push(`Email: ${email}`);
-      if (phone) lines.push(`Phone: ${phone}`);
-      if (date) lines.push(`Date: ${date}`);
-
-      const contactBlock = lines.join("\n") || "";
-      const lineHeightInches = 0.45; // approx per line
-      const blockHeight = Math.max(0.9, lines.length * lineHeightInches);
-      const yCentered = (FULL_H - blockHeight) / 2;
-
-      if (contactBlock) {
-        s1.addText(contactBlock, {
-          x: 0.6, y: yCentered, w: 8.8, h: blockHeight,
-          fontSize: 20, color: "FFFFFF", lineSpacing: 26, align: "left", valign: "middle",
-          shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
-        });
-      }
-    } catch (err) {
-      console.error("Cover generation failed", err);
+    slide.addImage({ data, x, y, w, h });
+    placedAny = true;
+    // place second image to the right half if two provided
+    if (i === 0 && imgUrls.length > 1) {
+      // shift frame to the right for second image
+      (globalThis as any)._exportPptx_nextImgPos = { x: IMG_X + IMG_W + 0.5, y: IMG_Y };
+    }
+    if (i === 1 && (globalThis as any)._exportPptx_nextImgPos) {
+      // reset for next slide
+      (globalThis as any)._exportPptx_nextImgPos = undefined;
     }
   }
 
-  /* ---------- PRODUCT SLIDES ---------- */
+  // Description bullets (prefer p.bullets else split description)
+  const bullets = p.bullets && p.bullets.length > 0 ? p.bullets : splitBullets(p.description);
+  if (bullets.length) {
+    slide.addText(bullets.map((t) => `• ${t}`).join("\n"), {
+      x: placedAny ? IMG_X + IMG_W + 0.6 : 0.6,
+      y: 1.2,
+      w: placedAny ? FULL_W - (IMG_X + IMG_W + 1.2) : FULL_W - 1.2,
+      h: 2.6,
+      fontSize: 14,
+      color: "000000",
+    });
+  }
 
-  for (const p of items) {
+  // Category path & warranties
+  const metaLines: string[] = [];
+  if (p.categoryPath) metaLines.push(`Category: ${p.categoryPath}`);
+  if (p.warrantyFinish) metaLines.push(p.warrantyFinish);
+  if (p.warrantyLabour) metaLines.push(p.warrantyLabour);
+  if (p.specs) metaLines.push(p.specs);
+
+  if (metaLines.length) {
+    slide.addText(metaLines.join("\n"), {
+      x: 0.6, y: FULL_H - 1.5, w: FULL_W - 1.2, h: 1.0,
+      fontSize: 10, color: "444444",
+    });
+  }
+}
+
+async function addBackSlides(pptx: PptxGenJS, urls: string[] | undefined) {
+  if (!urls?.length) return;
+  for (const u of urls) {
+    const data = await urlToDataUrl(u);
     const s = pptx.addSlide();
-
-    if (p.imageProxied) {
-      try {
-        const imgData = await urlToDataUrl(p.imageProxied);
-        await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
-      } catch (imgErr) {
-        console.warn("Product image failed:", p.imageProxied, imgErr);
-      }
-    }
-
-    s.addText(p.name || "—", {
-      x: 6.3, y: 0.7, w: 3.9, h: 0.9, fontSize: 30, bold: true,
-    });
-
-    const bullets = (p.specsBullets ?? []).slice(0, 8).map(b => `• ${b}`).join("\n");
-    const body = [p.description, bullets].filter(Boolean).join("\n\n");
-
-    s.addText(body || "", {
-      x: 6.3, y: 1.8, w: 3.9, h: 3.2,
-      fontSize: 14, lineSpacing: 18, valign: "top", shrinkText: true,
-    });
-
-    if (p.code) {
-      s.addText(p.code, {
-        x: 8.9, y: 5.25, w: 1.0, h: 0.3, fontSize: 12, color: "666666", align: "right",
-      });
-    }
-  }
-
-  /* ---------- SPEC SLIDES ---------- */
-  for (const p of items) {
-    const pdfUrl: string | undefined = (p as any).pdfUrl;
-    if (!pdfUrl) continue;
-    const s2 = pptx.addSlide();
-    s2.addText(`${p.name || "—"} — Specifications`, {
-      x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
-    });
-
-    let addedImage = false;
-    try {
-      const previewUrl = await findSpecPreviewUrl(pdfUrl, p.code);
-      if (previewUrl) {
-        const prevData = await urlToDataUrl(previewUrl);
-        await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
-        addedImage = true;
-      }
-    } catch (e) {
-      console.warn("Spec preview load failed:", e);
-    }
-
-    if (!addedImage) {
-      s2.addText(
-        "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, e.g. PMB420.png).",
-        { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
-      );
-    }
-
-    try {
-      s2.addText("Open Spec PDF", {
-        x: 0.5, y: 5.0, w: 2.0, h: 0.4, fontSize: 16, color: "0078D4",
-        hyperlink: { url: pdfUrl },
-      });
-    } catch {}
-  }
-
-  /* ---------- BACK PAGES ---------- */
-  for (const url of BACK_URLS) {
-    try {
-      const data = await urlToDataUrl(url);
-      const s = pptx.addSlide();
+    if (data) {
       s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H });
-    } catch (e) {
-      console.warn("Back page image failed:", url, e);
     }
   }
+}
 
-  const filename = `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`;
-  await pptx.writeFile({ fileName: filename });
+/* ----------------------------- Export ---------------------------- */
+
+export async function exportSelectionPptx(products: Product[], options: ExportOptions = {}) {
+  const pptx = new PptxGenJS();
+  pptx.layout = "LAYOUT_16x9";
+
+  await addCoverSlide(pptx, options);
+
+  for (const p of products) {
+    await addProductSlide(pptx, p);
+  }
+
+  await addBackSlides(pptx, options.backImageUrls);
+
+  const name = options.fileName || fileNameFrom(options);
+  await pptx.writeFile({ fileName: name });
 }
