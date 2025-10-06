@@ -1,3 +1,4 @@
+// src/App.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
@@ -35,7 +36,7 @@ function detectImageUrl(p: any): string | undefined {
   ].filter(Boolean);
   if (fields.length > 0) return fields[0];
 
-  // fallback: scan all fields
+  // fallback: scan all fields for any image-looking URL
   for (const v of Object.values(p)) {
     const s = String(v || "").trim();
     if (/\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s)) return s;
@@ -126,20 +127,24 @@ function MainProductPage() {
         phone: contact.phone,
         date: project.presentationDate || "",
         items: list,
-
-        // ✅ include cover/back pages (ensure these exist in /public/branding)
         coverImageUrls: ["/branding/cover.jpg"],
         backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
       });
 
-      // ✅ clear UI selections
+      // ✅ clear selections, filters, and form data after export
       setSelected({});
       setQ("");
       setCat("All");
       setSort("sheet");
+
       try {
         localStorage.removeItem("selectedProductIds");
+        localStorage.removeItem("contact");
+        localStorage.removeItem("project");
       } catch {}
+
+      alert("✅ Export complete! Form and selections cleared.");
+      window.location.reload();
     } catch (e: any) {
       console.error("Export failed", e);
       alert("Export failed: " + (e?.message || e));
