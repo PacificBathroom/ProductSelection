@@ -12,7 +12,6 @@ const pick = (row: Row, ...keys: string[]) => {
   return undefined;
 };
 
-/** Convert the matrix values from Google Sheets → array of row objects */
 function valuesToRows(values: string[][]): Row[] {
   const [header, ...rest] = values;
   const keys = (header ?? []).map((h) => String(h || "").trim());
@@ -23,7 +22,7 @@ function valuesToRows(values: string[][]): Row[] {
   });
 }
 
-/** Convert Google Drive share links to direct-download links */
+/** Drive share -> direct */
 function toDirectImageUrl(u?: string) {
   if (!u) return u;
   const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
@@ -31,17 +30,10 @@ function toDirectImageUrl(u?: string) {
   return u;
 }
 
-/** Map one row from the sheet into a Product object. */
-function mapRow(row: Row): Product {
-  const name = pick(row, "Name", "Product", "Title");
-  const code = pick(row, "SKU", "Code", "Item Code", "Product Code");
-  const description = pick(row, "Description", "Desc", "Blurb");
-  const category = pick(row, "Category", "Categories");
-  const url = pick(row, "URL", "Link", "Page");
-  const pdfUrl = pick(row, "PDF", "Spec", "Spec Sheet", "Spec URL");
-
-  // 🖼 find an image in ANY plausible column
-  const rawImg =
+/** NEW: find an image URL in ANY column */
+function findAnyImageUrl(row: Row): string | undefined {
+  // Prefer common headers first (cheap win)
+  const preferred =
     pick(
       row,
       "Image",
@@ -50,13 +42,43 @@ function mapRow(row: Row): Product {
       "Picture",
       "Photo",
       "Img",
-      "Images",
-      "Thumbnail"
+      "Thumbnail",
+      "Main Image"
     ) || undefined;
+  if (preferred) return preferred;
 
+  // Fallback: scan all cells for something that looks like an image URL
+  const looksUrl = (s: string) =>
+    /^https?:\/\//i.test(s) || s.startsWith("/");
+
+  const looksImage = (s: string) =>
+    /\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s) ||
+    /drive\.google\.com\/file\/d\//i.test(s) ||
+    /wp-content|cloudfront|cdn|images|branding/i.test(s);
+
+  for (const v of Object.values(row)) {
+    const s = String(v || "").trim();
+    if (!s) continue;
+    if (looksUrl(s) && looksImage(s)) return s;
+  }
+  return undefined;
+}
+
+/** Map a row to Product */
+function mapRow(row: Row): Product {
+  const name = pick(row, "Name", "Product", "Title");
+  const code = pick(row, "SKU", "Code", "Item Code", "Product Code");
+  const description = pick(row, "Description", "Desc", "Blurb");
+  const category = pick(row, "Category", "Categories");
+  const url = pick(row, "URL", "Link", "Page");
+  const pdfUrl = pick(row, "PDF", "Spec", "Spec Sheet", "Spec URL");
+
+  const rawImg = findAnyImageUrl(row);
   const direct = toDirectImageUrl(rawImg);
+
+  // If it’s absolute (http) proxy it; if local (/foo.jpg) keep it
   const imageProxied =
-    direct && !direct.startsWith("/") // avoid duplicating local paths
+    direct && /^https?:\/\//i.test(direct)
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
 
@@ -80,7 +102,6 @@ function mapRow(row: Row): Product {
 }
 
 /* ---------- main fetch ---------- */
-/** Fetch products from your Sheet endpoint that returns `{ values: string[][] }`. */
 export async function fetchProducts(range: string): Promise<Product[]> {
   const res = await fetch(`/api/sheet?range=${encodeURIComponent(range)}`, {
     cache: "no-store",
