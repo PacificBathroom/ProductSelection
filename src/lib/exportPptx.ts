@@ -126,22 +126,27 @@ export async function exportPptx({
       const bg = await urlToDataUrl(COVER_URLS[0]);
       s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H });
 
+      // Project name (top)
       s1.addText(projectName, {
         x: 0.6, y: 0.6, w: 8.8, h: 1.0,
         fontSize: 32, bold: true, color: "FFFFFF",
         shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
       });
 
+      // Contact info (centered vertically)
       const lines: string[] = [];
       if (contactName) lines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
       if (email) lines.push(`Email: ${email}`);
       if (phone) lines.push(`Phone: ${phone}`);
       if (date) lines.push(`Date: ${date}`);
-      // Removed "Items selected" per your request
 
-      s1.addText(lines.join("\n"), {
-        x: 0.6, y: 1.6, w: 8.8, h: 2.5,
-        fontSize: 20, color: "FFFFFF", lineSpacing: 28,
+      const contactBlock = lines.join("\n");
+      const blockHeight = Math.max(1.0, lines.length * 0.5);
+      const yCentered = (FULL_H - blockHeight) / 2;
+
+      s1.addText(contactBlock, {
+        x: 0.6, y: yCentered, w: 8.8, h: blockHeight,
+        fontSize: 20, color: "FFFFFF", lineSpacing: 28, align: "left", valign: "middle",
         shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
       });
     } catch (err) {
