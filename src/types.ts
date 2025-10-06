@@ -2,14 +2,21 @@ export type Product = {
   code?: string;
   name?: string;
   url?: string;
+  description?: string;
+  category?: string;
 
   // images
-  imageUrl?: string;       // original URL (optional)
-  imageProxied?: string;   // same-origin/proxied URL we actually use
+  image?: string;
+  imageUrl?: string;     
+  imageProxied?: string;  
 
   // text
   description?: string;
   specsBullets?: string[];
+
+    // links/specs
+  url?: string;       // product page
+ specsBullets?: string[]; // feature bullets
 
   // specs
   pdfUrl?: string;
