@@ -91,7 +91,7 @@ async function addContainedImage(
   slide.addImage({ data: dataUrl, ...rect } as any);
 }
 
-// Try to find a preview image next to the PDF in /public/specs
+// try to guess a preview beside the PDF in /public/specs
 function guessPreviewFromPdf(pdfUrl?: string): string | undefined {
   if (!pdfUrl) return;
   const last = pdfUrl.split("/").pop() || "";
@@ -99,6 +99,7 @@ function guessPreviewFromPdf(pdfUrl?: string): string | undefined {
   if (!base) return;
   const stems = [base, base.replace(/\s+/g, "_"), base.replace(/\s+/g, "")];
   const exts = ["png", "jpg", "jpeg", "webp"];
+  // we’ll try loading the first candidate that succeeds
   for (const s of stems) for (const e of exts) return `/specs/${s}.${e}`;
   return;
 }
@@ -146,38 +147,49 @@ export async function exportPptx({
   for (const p of items) {
     const s = pptx.addSlide();
 
-    // product image (prefer proxied)
+    // 1) image (top area)
     const imgUrl = p.imageProxied || p.imageUrl || p.image;
     if (imgUrl) {
       try {
         const imgData = await urlToDataUrl(imgUrl);
         if (imgData) {
-          await addContainedImage(s, imgData, { x: 0.25, y: 0.4, w: 9.5, h: 3.6 });
+          await addContainedImage(s, imgData, { x: 0.5, y: 0.5, w: 9.0, h: 3.2 });
         }
       } catch {}
     }
 
-    // title + blurb
+    // 2) title + code
     s.addText(p.name || p.code || "Untitled Product", {
-      x: 0.5, y: 4.2, w: 9, h: 0.8, fontSize: 22, bold: true, color: "003366",
+      x: 0.5, y: 3.9, w: 9.0, h: 0.6, fontSize: 24, bold: true, color: "003366",
     });
     if (p.code) {
-      s.addText(`Code: ${p.code}`, { x: 0.5, y: 4.9, w: 9, h: 0.4, fontSize: 14, color: "444444" });
+      s.addText(`Code: ${p.code}`, {
+        x: 0.5, y: 4.55, w: 9.0, h: 0.4, fontSize: 14, color: "444444",
+      });
     }
+
+    // 3) description (left column)
     if (p.description) {
-      s.addText(p.description, { x: 0.5, y: 5.3, w: 9, h: 0.9, fontSize: 14, color: "444444" });
+      s.addText(p.description, {
+        x: 0.5, y: 5.05, w: 5.2, h: 1.3,
+        fontSize: 14, color: "444444",
+        lineSpacing: 20, valign: "top", shrinkText: true,
+      });
     }
 
-    // bullets
+    // 4) bullets (right column) – real bullets
     if (p.specsBullets && p.specsBullets.length) {
-      const bullets = p.specsBullets.slice(0, 6).map((b) => `• ${b}`).join("\n");
-      s.addText(bullets, { x: 5.4, y: 4.7, w: 4.2, h: 1.5, fontSize: 14 });
+      s.addText(p.specsBullets.slice(0, 6), {
+        x: 5.9, y: 5.05, w: 3.6, h: 1.3,
+        fontSize: 14, bullet: true, lineSpacing: 20, valign: "top",
+      });
     }
 
-    // spec link
+    // 5) spec link
     if (p.pdfUrl) {
       s.addText("Spec Sheet (PDF)", {
-        x: 0.5, y: 6.0, w: 3.0, h: 0.4, fontSize: 12, color: "1155CC",
+        x: 0.5, y: 6.45, w: 3.0, h: 0.35,
+        fontSize: 12, color: "1155CC",
         hyperlink: { url: p.pdfUrl },
       });
     }
