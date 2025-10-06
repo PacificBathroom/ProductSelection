@@ -116,18 +116,16 @@ function MainProductPage() {
     return;
   }
 
-  try {
-    await exportPptx({
-      projectName: project.projectName || "Product Presentation",
-      clientName: project.clientName || "",
-      contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
-      email: contact.email,
-      phone: contact.phone,
-      date: project.presentationDate || "",
-      items: list,
-      coverImageUrls: ["/branding/cover.jpg"],
-      backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
-    });
+// Clear persisted form (SettingsBridge/Provider usually uses "settings")
+try {
+  localStorage.removeItem("settings");      // primary
+  localStorage.removeItem("contact");       // just in case
+  localStorage.removeItem("project");       // just in case
+} catch {}
+
+// Force a fresh form render
+window.location.reload();
+
 
     // ✅ Clear selections/filters
     setSelected({});
