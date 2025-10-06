@@ -1,32 +1,26 @@
+// src/types.ts
+
 export type Product = {
+  // identifiers / basic info
   code?: string;
   name?: string;
-  url?: string;
   description?: string;
   category?: string;
+
+  // links
+  url?: string;           // product page
 
   // images
-  image?: string;
-  imageUrl?: string;     
-  imageProxied?: string;  
+  image?: string;         // raw source (if present)
+  imageUrl?: string;      // alias some sheets use
+  imageProxied?: string;  // /api/fetch-image?url=...
 
-  // text
-  description?: string;
-  specsBullets?: string[];
-
-    // links/specs
-  url?: string;       // product page
- specsBullets?: string[]; // feature bullets
-
-  // specs
-  pdfUrl?: string;
-  pdfKey?: string;
-
-  // optional grouping
-  category?: string;
+  // specs / features
+  specsBullets?: string[]; // feature bullets for UI/export
+  pdfUrl?: string;         // spec sheet URL
+  pdfKey?: string;         // optional local key for previews
 };
 
-// src/types.ts
 export type ContactInfo = {
   company?: string;
   contactName: string;
@@ -40,4 +34,3 @@ export type ProjectMeta = {
   clientName?: string;
   presentationDate?: string; // 'YYYY-MM-DD'
 };
-
