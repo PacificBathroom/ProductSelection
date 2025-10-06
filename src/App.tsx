@@ -10,48 +10,61 @@ import ContactProjectForm from "./components/ContactProjectForm";
 /* helpers */
 const textIncludes = (hay: string | undefined, needle: string) =>
   (hay ?? "").toLowerCase().includes(needle.toLowerCase());
-const keyOf = (p: Product) => (p.code || p.name || "") + "::" + ((p as any).url || "");
+const keyOf = (p: Product) =>
+  (p.code || p.name || "") + "::" + ((p as any).url || "");
 const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 
-/** Turn common sharing links into direct image URLs */
+/** Convert Drive links to direct URLs */
 function toDirectImageUrl(u?: string) {
   if (!u) return u;
-  // Google Drive: https://drive.google.com/file/d/<ID>/view?usp=sharing
-  const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
+  const m = u.match(/drive\\.google\\.com\\/file\\/d\\/([^/]+)/i);
   if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
   return u;
 }
 
-/** Add a stable, proxied image URL the exporter prefers */
+/** Universal image detection for robustness */
+function detectImageUrl(p: any): string | undefined {
+  const fields = [
+    p.imageProxied,
+    p.imageUrl,
+    p.image,
+    p.img,
+    p.thumbnail,
+    p.picture,
+  ].filter(Boolean);
+  if (fields.length > 0) return fields[0];
+  // fallback: scan all string values in object for image URLs
+  for (const v of Object.values(p)) {
+    const s = String(v || "").trim();
+    if (/\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s)) return s;
+    if (/drive\.google\.com\/file\/d\//i.test(s)) return s;
+  }
+  return undefined;
+}
+
+/** Add a stable proxied image URL for export + display */
 function augmentProductImages(p: Product): Product {
-  const anyP = p as any;
-  const raw =
-    anyP.imageProxied ||
-    anyP.imageUrl ||
-    anyP.image ||
-    p.image ||
-    anyP.img ||
-    undefined;
-
+  const raw = detectImageUrl(p);
   const direct = toDirectImageUrl(raw);
-  const imageProxied = direct ? `/api/fetch-image?url=${encodeURIComponent(direct)}` : undefined;
-
-  // Keep existing fields and add preferred export image
-  return { ...(p as any), ...(imageProxied ? { imageProxied } : {}) } as Product;
+  const imageProxied =
+    direct && /^https?:\\/\\//i.test(direct)
+      ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
+      : direct;
+  return { ...p, imageProxied };
 }
 
 /* --------------------------- main product section --------------------------- */
 function MainProductPage() {
   const { contact, project } = useSettings();
 
-  // load products
   const [items, setItems] = useState<Product[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
   useEffect(() => {
     (async () => {
       try {
         const ps = await fetchProducts("Products!A:Z");
-        // ✅ ensure each product has imageProxied for PPTX export + thumb
+        // ensure every product has an imageProxied
         setItems(ps.map(augmentProductImages));
       } catch (e: any) {
         setErr(e?.message || "fetch error");
@@ -59,7 +72,7 @@ function MainProductPage() {
     })();
   }, []);
 
-  // selection
+  // selection state
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const selectedList = useMemo(
     () => (items ?? []).filter((p) => selected[keyOf(p)]),
@@ -75,7 +88,8 @@ function MainProductPage() {
 
   const categories = useMemo(() => {
     const s = new Set<string>();
-    for (const p of items ?? []) if ((p as any).category) s.add((p as any).category);
+    for (const p of items ?? [])
+      if ((p as any).category) s.add((p as any).category);
     return ["All", ...Array.from(s).sort()];
   }, [items]);
 
@@ -91,11 +105,14 @@ function MainProductPage() {
       );
     }
     if (cat !== "All") a = a.filter((p: any) => p.category === cat);
-    if (sort === "name") a.sort((x: any, y: any) => (x.name || "").localeCompare(y.name || ""));
+    if (sort === "name")
+      a.sort((x: any, y: any) =>
+        (x.name || "").localeCompare(y.name || "")
+      );
     return a;
   }, [items, q, cat, sort]);
 
-  // export
+  /** Export PowerPoint */
   async function onExportClick() {
     const list = selectedList.length ? selectedList : visible;
     if (!list.length) {
@@ -106,19 +123,23 @@ function MainProductPage() {
       await exportPptx({
         projectName: project.projectName || "Product Presentation",
         clientName: project.clientName || "",
-        contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+        contactName: `${contact.contactName}${
+          contact.title ? ", " + contact.title : ""
+        }`,
         email: contact.email,
         phone: contact.phone,
         date: project.presentationDate || "",
-        items: list as Product[],
+        items: list,
       });
 
-      // ✅ CLEAR AFTER EXPORT
+      // ✅ Clear selections and filters after export
       setSelected({});
       setQ("");
       setCat("All");
       setSort("sheet");
-      try { localStorage.removeItem("selectedProductIds"); } catch {}
+      try {
+        localStorage.removeItem("selectedProductIds");
+      } catch {}
     } catch (e: any) {
       console.error("Export failed", e);
       alert("Export failed: " + (e?.message || e));
@@ -142,7 +163,9 @@ function MainProductPage() {
             onChange={(e) => setCat(e.target.value)}
           >
             {categories.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>
+                {c}
+              </option>
             ))}
           </select>
           <select
@@ -156,7 +179,9 @@ function MainProductPage() {
         </div>
         <div className="toolbar-right">
           <span className="muted">Selected: {selectedList.length}</span>
-          <button className="primary" onClick={onExportClick}>Export PPTX</button>
+          <button className="primary" onClick={onExportClick}>
+            Export PPTX
+          </button>
         </div>
       </div>
 
@@ -164,24 +189,31 @@ function MainProductPage() {
       {err && <p className="error">Error: {err}</p>}
       {!items && !err && <p className="muted">Loading…</p>}
 
-      {/* product grid */}
+      {/* grid */}
       <div className="grid">
         {(visible ?? []).map((p: any, i: number) => {
           const k = keyOf(p);
           const isSel = !!selected[k];
-          const pdfUrl: string | undefined = p.pdfUrl;
-          const pageUrl: string | undefined = p.url;
+          const pdfUrl = p.pdfUrl;
+          const pageUrl = p.url;
 
           return (
-            <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
+            <div
+              className={"card product" + (isSel ? " selected" : "")}
+              key={k + i}
+            >
               <label className="checkbox">
-                <input type="checkbox" checked={isSel} onChange={() => toggle(p)} />
+                <input
+                  type="checkbox"
+                  checked={isSel}
+                  onChange={() => toggle(p)}
+                />
               </label>
 
               <div className="thumb">
-                {p.imageProxied || p.imageUrl ? (
+                {p.imageProxied || p.imageUrl || p.image ? (
                   <img
-                    src={p.imageProxied || p.imageUrl}
+                    src={p.imageProxied || p.imageUrl || p.image}
                     alt={p.name || p.code || "product"}
                   />
                 ) : (
@@ -194,7 +226,7 @@ function MainProductPage() {
                 {p.code && <div className="sku">SKU: {p.code}</div>}
                 {p.description && <p className="desc">{p.description}</p>}
 
-                {p.specsBullets && p.specsBullets.length > 0 && (
+                {p.specsBullets?.length > 0 && (
                   <ul className="specs">
                     {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
                       <li key={j}>{s}</li>
@@ -219,7 +251,9 @@ function MainProductPage() {
                   )}
                 </div>
 
-                {p.category && <div className="category">Category: {p.category}</div>}
+                {p.category && (
+                  <div className="category">Category: {p.category}</div>
+                )}
               </div>
             </div>
           );
@@ -245,8 +279,9 @@ export default function App() {
           </div>
           <div className="card info">
             <p className="muted">
-              Fill in your contact &amp; project details on the left, then pick products below.
-              Use the search and filters to narrow down, tick items, and click <strong>Export PPTX</strong>.
+              Fill in your contact &amp; project details on the left, then pick
+              products below. Use the search and filters to narrow down, tick
+              items, and click <strong>Export PPTX</strong>.
             </p>
           </div>
         </div>
