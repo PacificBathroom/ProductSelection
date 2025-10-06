@@ -13,6 +13,33 @@ const textIncludes = (hay: string | undefined, needle: string) =>
 const keyOf = (p: Product) => (p.code || p.name || "") + "::" + ((p as any).url || "");
 const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 
+/** Turn common sharing links into direct image URLs */
+function toDirectImageUrl(u?: string) {
+  if (!u) return u;
+  // Google Drive: https://drive.google.com/file/d/<ID>/view?usp=sharing
+  const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
+  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  return u;
+}
+
+/** Add a stable, proxied image URL the exporter prefers */
+function augmentProductImages(p: Product): Product {
+  const anyP = p as any;
+  const raw =
+    anyP.imageProxied ||
+    anyP.imageUrl ||
+    anyP.image ||
+    p.image ||
+    anyP.img ||
+    undefined;
+
+  const direct = toDirectImageUrl(raw);
+  const imageProxied = direct ? `/api/fetch-image?url=${encodeURIComponent(direct)}` : undefined;
+
+  // Keep existing fields and add preferred export image
+  return { ...(p as any), ...(imageProxied ? { imageProxied } : {}) } as Product;
+}
+
 /* --------------------------- main product section --------------------------- */
 function MainProductPage() {
   const { contact, project } = useSettings();
@@ -24,7 +51,8 @@ function MainProductPage() {
     (async () => {
       try {
         const ps = await fetchProducts("Products!A:Z");
-        setItems(ps);
+        // ✅ ensure each product has imageProxied for PPTX export + thumb
+        setItems(ps.map(augmentProductImages));
       } catch (e: any) {
         setErr(e?.message || "fetch error");
       }
@@ -47,7 +75,7 @@ function MainProductPage() {
 
   const categories = useMemo(() => {
     const s = new Set<string>();
-    for (const p of items ?? []) if (p.category) s.add(p.category);
+    for (const p of items ?? []) if ((p as any).category) s.add((p as any).category);
     return ["All", ...Array.from(s).sort()];
   }, [items]);
 
@@ -55,15 +83,15 @@ function MainProductPage() {
     let a = [...(items ?? [])];
     if (q) {
       a = a.filter(
-        (p) =>
+        (p: any) =>
           textIncludes(p.name, q) ||
           textIncludes(p.code, q) ||
           textIncludes(p.description, q) ||
           textIncludes(p.category, q)
       );
     }
-    if (cat !== "All") a = a.filter((p) => p.category === cat);
-    if (sort === "name") a.sort((x, y) => (x.name || "").localeCompare(y.name || ""));
+    if (cat !== "All") a = a.filter((p: any) => p.category === cat);
+    if (sort === "name") a.sort((x: any, y: any) => (x.name || "").localeCompare(y.name || ""));
     return a;
   }, [items, q, cat, sort]);
 
@@ -74,15 +102,27 @@ function MainProductPage() {
       alert("No products to export.");
       return;
     }
-    await exportPptx({
-      projectName: project.projectName || "Product Presentation",
-      clientName: project.clientName || "",
-      contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
-      email: contact.email,
-      phone: contact.phone,
-      date: project.presentationDate || "",
-      items: list,
-    });
+    try {
+      await exportPptx({
+        projectName: project.projectName || "Product Presentation",
+        clientName: project.clientName || "",
+        contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+        email: contact.email,
+        phone: contact.phone,
+        date: project.presentationDate || "",
+        items: list as Product[],
+      });
+
+      // ✅ CLEAR AFTER EXPORT
+      setSelected({});
+      setQ("");
+      setCat("All");
+      setSort("sheet");
+      try { localStorage.removeItem("selectedProductIds"); } catch {}
+    } catch (e: any) {
+      console.error("Export failed", e);
+      alert("Export failed: " + (e?.message || e));
+    }
   }
 
   return (
@@ -126,11 +166,11 @@ function MainProductPage() {
 
       {/* product grid */}
       <div className="grid">
-        {(visible ?? []).map((p: Product, i: number) => {
+        {(visible ?? []).map((p: any, i: number) => {
           const k = keyOf(p);
           const isSel = !!selected[k];
-          const pdfUrl = (p as any).pdfUrl as string | undefined;
-          const pageUrl = (p as any).url as string | undefined;
+          const pdfUrl: string | undefined = p.pdfUrl;
+          const pageUrl: string | undefined = p.url;
 
           return (
             <div className={"card product" + (isSel ? " selected" : "")} key={k + i}>
@@ -139,9 +179,9 @@ function MainProductPage() {
               </label>
 
               <div className="thumb">
-                {p.imageProxied || (p as any).imageUrl ? (
+                {p.imageProxied || p.imageUrl ? (
                   <img
-                    src={p.imageProxied || (p as any).imageUrl}
+                    src={p.imageProxied || p.imageUrl}
                     alt={p.name || p.code || "product"}
                   />
                 ) : (
