@@ -1,4 +1,3 @@
-// api/fetch-image.js
 export default async function handler(req, res) {
   try {
     const url = req.query.url;
