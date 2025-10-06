@@ -9,18 +9,63 @@ const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------- helpers ---------- */
 
-// Fix: resolve relative URLs to absolute
-async function urlToDataUrl(url: string): Promise<string> {
-  const absUrl = url.startsWith("/") ? `${window.location.origin}${url}` : url;
-  const res = await fetch(absUrl);
-  if (!res.ok) throw new Error(`fetch failed: ${absUrl}`);
-  const blob = await res.blob();
-  return await new Promise<string>((resolve, reject) => {
+// Convert Blob -> data URL
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onerror = () => reject(new Error("FileReader error"));
     r.onload = () => resolve(String(r.result));
     r.readAsDataURL(blob);
   });
+}
+
+/**
+ * Robust URL -> data URL loader.
+ * Tries:
+ *  1) direct fetch
+ *  2) fetch with credentials (include cookies)
+ *  3) fetch via local proxy endpoint: /api/fetch-image?url=...
+ *
+ * Notes:
+ *  - If url starts with "/", it will be converted to absolute using window.location.origin.
+ *  - If the URL is already a data URL, it returns immediately.
+ *  - Implement a server-side proxy if your images are blocked by CORS or need auth.
+ */
+async function urlToDataUrl(url: string): Promise<string> {
+  if (!url) throw new Error("urlToDataUrl: missing url");
+  const abs = url.startsWith("/") ? `${window.location.origin}${url}` : url;
+  if (abs.startsWith("data:")) return abs;
+
+  async function tryFetch(u: string, opts?: RequestInit) {
+    const res = await fetch(u, { cache: "no-store", ...opts });
+    if (!res.ok) throw new Error(`fetch failed (${res.status}) ${u}`);
+    const blob = await res.blob();
+    return blobToDataUrl(blob);
+  }
+
+  // 1) plain fetch
+  try {
+    return await tryFetch(abs);
+  } catch (err1) {
+    console.warn("urlToDataUrl: direct fetch failed for", abs, err1);
+  }
+
+  // 2) fetch with credentials (include cookies) — helpful if same-origin uses session cookies
+  try {
+    return await tryFetch(abs, { credentials: "include" });
+  } catch (err2) {
+    console.warn("urlToDataUrl: fetch with credentials failed for", abs, err2);
+  }
+
+  // 3) fallback to proxy endpoint on your server (you must implement it)
+  // Example endpoint: GET /api/fetch-image?url=<encodedUrl>
+  try {
+    const proxyPath = `/api/fetch-image?url=${encodeURIComponent(abs)}`;
+    return await tryFetch(proxyPath);
+  } catch (err3) {
+    console.warn("urlToDataUrl: proxy fetch failed for", abs, err3);
+    throw new Error(`Could not load image: ${url}`);
+  }
 }
 
 async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> {
@@ -123,34 +168,44 @@ export async function exportPptx({
   if (COVER_URLS[0]) {
     try {
       const s1 = pptx.addSlide();
-      const bg = await urlToDataUrl(COVER_URLS[0]);
-      s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H });
 
-      // Project name (top)
-      s1.addText(projectName, {
-        x: 0.6, y: 0.6, w: 8.8, h: 1.0,
+      // background image (if present) — robust loader
+      try {
+        const bg = await urlToDataUrl(COVER_URLS[0]);
+        s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H });
+      } catch (bgErr) {
+        console.warn("Cover background failed to load:", bgErr);
+      }
+
+      // Project title: centered horizontally across the slide
+      s1.addText(projectName || "Product Presentation", {
+        x: 0, y: 0.6, w: FULL_W, h: 1.0,
         fontSize: 32, bold: true, color: "FFFFFF",
+        align: "center",
         shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
       });
 
-      // Contact info (centered vertically)
+      // Contact info block (centered vertically)
       const lines: string[] = [];
       if (contactName) lines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
       if (email) lines.push(`Email: ${email}`);
       if (phone) lines.push(`Phone: ${phone}`);
       if (date) lines.push(`Date: ${date}`);
 
-      const contactBlock = lines.join("\n");
-      const blockHeight = Math.max(1.0, lines.length * 0.5);
+      const contactBlock = lines.join("\n") || "";
+      const lineHeightInches = 0.45; // approx per line
+      const blockHeight = Math.max(0.9, lines.length * lineHeightInches);
       const yCentered = (FULL_H - blockHeight) / 2;
 
-      s1.addText(contactBlock, {
-        x: 0.6, y: yCentered, w: 8.8, h: blockHeight,
-        fontSize: 20, color: "FFFFFF", lineSpacing: 28, align: "left", valign: "middle",
-        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
-      });
+      if (contactBlock) {
+        s1.addText(contactBlock, {
+          x: 0.6, y: yCentered, w: 8.8, h: blockHeight,
+          fontSize: 20, color: "FFFFFF", lineSpacing: 26, align: "left", valign: "middle",
+          shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+        });
+      }
     } catch (err) {
-      console.error("Cover image failed", err);
+      console.error("Cover generation failed", err);
     }
   }
 
@@ -163,8 +218,8 @@ export async function exportPptx({
       try {
         const imgData = await urlToDataUrl(p.imageProxied);
         await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
-      } catch (err) {
-        console.warn("Product image load failed", p.imageProxied, err);
+      } catch (imgErr) {
+        console.warn("Product image failed:", p.imageProxied, imgErr);
       }
     }
 
@@ -175,7 +230,7 @@ export async function exportPptx({
     const bullets = (p.specsBullets ?? []).slice(0, 8).map(b => `• ${b}`).join("\n");
     const body = [p.description, bullets].filter(Boolean).join("\n\n");
 
-    s.addText(body, {
+    s.addText(body || "", {
       x: 6.3, y: 1.8, w: 3.9, h: 3.2,
       fontSize: 14, lineSpacing: 18, valign: "top", shrinkText: true,
     });
@@ -188,9 +243,9 @@ export async function exportPptx({
   }
 
   /* ---------- SPEC SLIDES ---------- */
-
   for (const p of items) {
-    if (!p.pdfUrl) continue;
+    const pdfUrl: string | undefined = (p as any).pdfUrl;
+    if (!pdfUrl) continue;
     const s2 = pptx.addSlide();
     s2.addText(`${p.name || "—"} — Specifications`, {
       x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
@@ -198,13 +253,15 @@ export async function exportPptx({
 
     let addedImage = false;
     try {
-      const previewUrl = await findSpecPreviewUrl(p.pdfUrl, p.code);
+      const previewUrl = await findSpecPreviewUrl(pdfUrl, p.code);
       if (previewUrl) {
         const prevData = await urlToDataUrl(previewUrl);
         await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
         addedImage = true;
       }
-    } catch {}
+    } catch (e) {
+      console.warn("Spec preview load failed:", e);
+    }
 
     if (!addedImage) {
       s2.addText(
@@ -213,10 +270,12 @@ export async function exportPptx({
       );
     }
 
-    s2.addText("Open Spec PDF", {
-      x: 0.5, y: 5.0, w: 2.0, h: 0.4, fontSize: 16, color: "0078D4",
-      hyperlink: { url: p.pdfUrl },
-    });
+    try {
+      s2.addText("Open Spec PDF", {
+        x: 0.5, y: 5.0, w: 2.0, h: 0.4, fontSize: 16, color: "0078D4",
+        hyperlink: { url: pdfUrl },
+      });
+    } catch {}
   }
 
   /* ---------- BACK PAGES ---------- */
@@ -225,7 +284,9 @@ export async function exportPptx({
       const data = await urlToDataUrl(url);
       const s = pptx.addSlide();
       s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H });
-    } catch {}
+    } catch (e) {
+      console.warn("Back page image failed:", url, e);
+    }
   }
 
   const filename = `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`;
