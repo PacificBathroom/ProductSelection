@@ -1,4 +1,3 @@
-// src/App.tsx
 import React, { useEffect, useMemo, useState } from "react";
 import type { Product } from "./types";
 import { fetchProducts } from "./lib/products";
@@ -7,23 +6,24 @@ import { SettingsProvider, useSettings } from "./state/SettingsProvider";
 import SettingsBridge from "./state/SettingsBridge";
 import ContactProjectForm from "./components/ContactProjectForm";
 
-/* helpers */
+/* ---------- helpers ---------- */
 const textIncludes = (hay: string | undefined, needle: string) =>
   (hay ?? "").toLowerCase().includes(needle.toLowerCase());
+
 const keyOf = (p: Product) =>
   (p.code || p.name || "") + "::" + ((p as any).url || "");
+
 const safeTitle = (s?: string) => (s ?? "").trim() || "—";
 
-/** Convert Drive links to direct URLs */
+/** Convert Drive share links to direct-download URLs */
 function toDirectImageUrl(u?: string) {
   if (!u) return u;
-  // https://drive.google.com/file/d/<ID>/view?usp=sharing -> direct file
   const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
   if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
   return u;
 }
 
-/** Universal image detection for robustness */
+/** Find an image URL from any possible field */
 function detectImageUrl(p: any): string | undefined {
   const fields = [
     p.imageProxied,
@@ -34,7 +34,8 @@ function detectImageUrl(p: any): string | undefined {
     p.picture,
   ].filter(Boolean);
   if (fields.length > 0) return fields[0];
-  // fallback: scan all string values in object for image URLs
+
+  // fallback: scan all fields
   for (const v of Object.values(p)) {
     const s = String(v || "").trim();
     if (/\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s)) return s;
@@ -43,7 +44,7 @@ function detectImageUrl(p: any): string | undefined {
   return undefined;
 }
 
-/** Add a stable proxied image URL for export + display */
+/** Add proxied image URL for same-origin export use */
 function augmentProductImages(p: Product): Product {
   const raw = detectImageUrl(p);
   const direct = toDirectImageUrl(raw);
@@ -54,10 +55,9 @@ function augmentProductImages(p: Product): Product {
   return { ...p, imageProxied };
 }
 
-/* --------------------------- main product section --------------------------- */
+/* ---------- main section ---------- */
 function MainProductPage() {
   const { contact, project } = useSettings();
-
   const [items, setItems] = useState<Product[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -65,7 +65,6 @@ function MainProductPage() {
     (async () => {
       try {
         const ps = await fetchProducts("Products!A:Z");
-        // ensure every product has an imageProxied
         setItems(ps.map(augmentProductImages));
       } catch (e: any) {
         setErr(e?.message || "fetch error");
@@ -73,7 +72,6 @@ function MainProductPage() {
     })();
   }, []);
 
-  // selection state
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const selectedList = useMemo(
     () => (items ?? []).filter((p) => selected[keyOf(p)]),
@@ -82,7 +80,6 @@ function MainProductPage() {
   const toggle = (p: Product) =>
     setSelected((s) => ({ ...s, [keyOf(p)]: !s[keyOf(p)] }));
 
-  // filters
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("All");
   const [sort, setSort] = useState<"sheet" | "name">("sheet");
@@ -107,9 +104,7 @@ function MainProductPage() {
     }
     if (cat !== "All") a = a.filter((p: any) => p.category === cat);
     if (sort === "name")
-      a.sort((x: any, y: any) =>
-        (x.name || "").localeCompare(y.name || "")
-      );
+      a.sort((x: any, y: any) => (x.name || "").localeCompare(y.name || ""));
     return a;
   }, [items, q, cat, sort]);
 
@@ -131,9 +126,13 @@ function MainProductPage() {
         phone: contact.phone,
         date: project.presentationDate || "",
         items: list,
+
+        // ✅ include cover/back pages (ensure these exist in /public/branding)
+        coverImageUrls: ["/branding/cover.jpg"],
+        backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
       });
 
-      // ✅ Clear selections and filters after export
+      // ✅ clear UI selections
       setSelected({});
       setQ("");
       setCat("All");
@@ -172,7 +171,9 @@ function MainProductPage() {
           <select
             className="sort"
             value={sort}
-            onChange={(e) => setSort(e.target.value as "sheet" | "name")}
+            onChange={(e) =>
+              setSort(e.target.value as "sheet" | "name")
+            }
           >
             <option value="sheet">Sheet order</option>
             <option value="name">Name (A–Z)</option>
@@ -186,11 +187,9 @@ function MainProductPage() {
         </div>
       </div>
 
-      {/* status */}
       {err && <p className="error">Error: {err}</p>}
       {!items && !err && <p className="muted">Loading…</p>}
 
-      {/* grid */}
       <div className="grid">
         {(visible ?? []).map((p: any, i: number) => {
           const k = keyOf(p);
@@ -226,7 +225,6 @@ function MainProductPage() {
                 <div className="name">{safeTitle(p.name)}</div>
                 {p.code && <div className="sku">SKU: {p.code}</div>}
                 {p.description && <p className="desc">{p.description}</p>}
-
                 {p.specsBullets?.length > 0 && (
                   <ul className="specs">
                     {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
@@ -234,7 +232,6 @@ function MainProductPage() {
                     ))}
                   </ul>
                 )}
-
                 <div className="links">
                   {pageUrl && (
                     <a href={pageUrl} target="_blank" rel="noreferrer">
@@ -251,7 +248,6 @@ function MainProductPage() {
                     </a>
                   )}
                 </div>
-
                 {p.category && (
                   <div className="category">Category: {p.category}</div>
                 )}
@@ -264,7 +260,7 @@ function MainProductPage() {
   );
 }
 
-/* ------------------------------- app wrapper ------------------------------- */
+/* ---------- wrapper ---------- */
 export default function App() {
   return (
     <SettingsProvider>
