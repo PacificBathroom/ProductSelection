@@ -206,38 +206,100 @@ for (const p of items) {
   }
 }
 
-  /* SPEC SLIDES (optional preview next to PDF) */
-  for (const p of items) {
-    if (!p.pdfUrl) continue;
-    const s = pptx.addSlide();
-    s.addText(`${p.name || p.code || "—"} — Specifications`, {
-      x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 24, bold: true,
+ /* PRODUCT SLIDES */
+for (const p of items) {
+  const s = pptx.addSlide();
+
+  // === 1) Title at top ===
+  s.addText(p.name || p.code || "Untitled Product", {
+    x: 0.5,
+    y: 0.35,
+    w: 9.0,
+    h: 0.6,
+    fontSize: 26,
+    bold: true,
+    color: "003366",
+  });
+
+  // === 2) Two-column body: image left, text right ===
+  // Left: image area
+  const IMG_BOX = { x: 0.5, y: 1.1, w: 5.2, h: 3.9 };
+
+  // Right: text column
+  const RIGHT_X = 6.0;
+  const RIGHT_W = 3.5;
+  const DESC_BOX = { x: RIGHT_X, y: 1.1, w: RIGHT_W, h: 2.2 };
+  const BULLETS_BOX = { x: RIGHT_X, y: 3.4, w: RIGHT_W, h: 1.6 };
+
+  // Image (prefer proxied)
+  const imgUrl = p.imageProxied || p.imageUrl || p.image;
+  if (imgUrl) {
+    try {
+      const imgData = await urlToDataUrl(imgUrl);
+      if (imgData) await addContainedImage(s, imgData, IMG_BOX);
+    } catch {}
+  }
+
+  // Description (top-aligned, shrink to fit so it never runs off page)
+  if (p.description) {
+    s.addText(p.description, {
+      ...DESC_BOX,
+      fontSize: 13,
+      color: "444444",
+      lineSpacing: 18,
+      valign: "top",
+      shrinkText: true,
     });
+  }
 
-    let added = false;
-    const previewGuess = guessPreviewFromPdf(p.pdfUrl);
-    if (previewGuess) {
-      try {
-        const data = await urlToDataUrl(previewGuess);
-        if (data) {
-          await addContainedImage(s, data, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
-          added = true;
-        }
-      } catch {}
+  // Specs bullets (native bullets; fallback to "• " text if needed)
+  if (p.specsBullets && p.specsBullets.length) {
+    const itemsArr = p.specsBullets.slice(0, 8).map(String).filter(Boolean);
+    try {
+      s.addText(itemsArr, {
+        ...BULLETS_BOX,
+        fontSize: 13,
+        bullet: true,
+        lineSpacing: 18,
+        valign: "top",
+        shrinkText: true,
+      });
+    } catch {
+      s.addText(itemsArr.map(b => `• ${b}`).join("\n"), {
+        ...BULLETS_BOX,
+        fontSize: 13,
+        lineSpacing: 18,
+        valign: "top",
+        shrinkText: true,
+      });
     }
+  }
 
-    if (!added) {
-      s.addText(
-        "Preview image not found. Add a PNG/JPG next to the PDF in /public/specs with the same filename.",
-        { x: 0.6, y: 2.2, w: 8.8, h: 1.0, fontSize: 16, color: "888888" }
-      );
-    }
-
-    s.addText("Open Spec PDF", {
-      x: 0.5, y: 5.6, w: 2.2, h: 0.4, fontSize: 14, color: "1155CC",
+  // Code & spec link on a fixed footer line so they never collide with body
+  if (p.code) {
+    s.addText(`Code: ${p.code}`, {
+      x: 0.5,
+      y: 5.25,
+      w: 4.8,
+      h: 0.3,
+      fontSize: 12,
+      color: "444444",
+    });
+  }
+  if (p.pdfUrl) {
+    s.addText("Spec Sheet (PDF)", {
+      x: 6.0,
+      y: 5.25,
+      w: 3.5,
+      h: 0.3,
+      fontSize: 12,
+      color: "1155CC",
+      align: "right",
       hyperlink: { url: p.pdfUrl },
     });
   }
+}
+
 
   /* BACK PAGES */
   for (const url of backImageUrls) {
