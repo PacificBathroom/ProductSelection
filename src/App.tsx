@@ -109,37 +109,42 @@ function MainProductPage() {
     return a;
   }, [items, q, cat, sort]);
 
-  async function onExportClick() {
+ async function onExportClick() {
   const list = selectedList.length ? selectedList : visible;
   if (!list.length) {
     alert("No products to export.");
     return;
   }
 
-// Clear persisted form (SettingsBridge/Provider usually uses "settings")
-try {
-  localStorage.removeItem("settings");      // primary
-  localStorage.removeItem("contact");       // just in case
-  localStorage.removeItem("project");       // just in case
-} catch {}
+  try {
+    // 1) do the export first
+    await exportPptx({
+      projectName: project.projectName || "Product Presentation",
+      clientName: project.clientName || "",
+      contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+      email: contact.email,
+      phone: contact.phone,
+      date: project.presentationDate || "",
+      items: list,
+      coverImageUrls: ["/branding/cover.jpg"],
+      backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
+    });
 
-// Force a fresh form render
-window.location.reload();
-
-
-    // ✅ Clear selections/filters
+    // 2) clear selections/filters
     setSelected({});
     setQ("");
     setCat("All");
     setSort("sheet");
-    try { localStorage.removeItem("selectedProductIds"); } catch {}
 
-    // ✅ Clear form persisted by SettingsBridge/Provider
-    // If your provider exposes resetAll(), prefer:  resetAll();
-    // Fallback: wipe the storage key that SettingsBridge uses (commonly "settings")
-    try { localStorage.removeItem("settings"); } catch {}
+    // 3) clear any persisted form state (SettingsBridge usually uses "settings")
+    try {
+      localStorage.removeItem("selectedProductIds");
+      localStorage.removeItem("settings");
+      localStorage.removeItem("contact");
+      localStorage.removeItem("project");
+    } catch {}
 
-    // Force UI to re-mount with blank form
+    // 4) refresh the form UI
     window.location.reload();
   } catch (e: any) {
     console.error("Export failed", e);
