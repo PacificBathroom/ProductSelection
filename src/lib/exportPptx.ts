@@ -133,7 +133,7 @@ export async function exportPptx({
   });
   const contactLines: string[] = [];
   if (clientName) contactLines.push(`Client: ${clientName}`);
-  if (contactName) contactLines.push(`Contact: ${contactName}${company ? `, ${company}` : ""}`);
+if (contactName) contactLines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
   if (email) contactLines.push(`Email: ${email}`);
   if (phone) contactLines.push(`Phone: ${phone}`);
   if (date) contactLines.push(`Date: ${date}`);
@@ -143,64 +143,79 @@ export async function exportPptx({
     });
   }
 
- /* PRODUCT SLIDES */
+/* PRODUCT SLIDES */
 for (const p of items) {
   const s = pptx.addSlide();
 
-  // 1) image (top area)
+  // === Title at top ===
+  s.addText(p.name || p.code || "Untitled Product", {
+    x: 0.5, y: 0.35, w: 9.0, h: 0.6,
+    fontSize: 26, bold: true, color: "003366",
+  });
+
+  // === Two-column body ===
+  // Left image box
+  const IMG_BOX = { x: 0.5, y: 1.05, w: 5.2, h: 3.9 };
   const imgUrl = p.imageProxied || p.imageUrl || p.image;
   if (imgUrl) {
     try {
-      const imgData = await urlToDataUrl(imgUrl);
-      if (imgData) {
-        await addContainedImage(s, imgData, { x: 0.5, y: 0.5, w: 9.0, h: 3.2 });
-      }
+      const data = await urlToDataUrl(imgUrl);
+      if (data) await addContainedImage(s, data, IMG_BOX);
     } catch {}
   }
 
-  // 2) title + code
-  s.addText(p.name || p.code || "Untitled Product", {
-    x: 0.5, y: 3.9, w: 9.0, h: 0.6, fontSize: 24, bold: true, color: "003366",
-  });
-  if (p.code) {
-    s.addText(`Code: ${p.code}`, {
-      x: 0.5, y: 4.55, w: 9.0, h: 0.4, fontSize: 14, color: "444444",
-    });
-  }
+  // Right column boxes
+  const RIGHT_X = 6.0;
+  const RIGHT_W = 3.5;
+  const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 2.3 };
+  const BULLETS_BOX = { x: RIGHT_X, y: 3.45, w: RIGHT_W, h: 1.6 };
 
-  // 3) description (left column) — bigger box, shrink + top-align
+  // Description (top-aligned, shrink to fit so it never runs off page)
   if (p.description) {
     s.addText(p.description, {
-      x: 0.5, y: 5.05, w: 5.2, h: 1.7,
-      fontSize: 14, color: "444444",
-      lineSpacing: 20, valign: "top", shrinkText: true,
+      ...DESC_BOX,
+      fontSize: 13,
+      color: "444444",
+      lineSpacing: 18,
+      valign: "top",
+      shrinkText: true,
     });
   }
 
-  // 4) bullets (right column) — try real bullets; fallback to prefixed text
+  // Specs bullets (native bullets with fallback)
   if (p.specsBullets && p.specsBullets.length) {
     const itemsArr = p.specsBullets.slice(0, 8).map(String).filter(Boolean);
-
-    // Try native bullets first
     try {
       s.addText(itemsArr, {
-        x: 5.9, y: 5.05, w: 3.6, h: 1.7,
-        fontSize: 14, bullet: true, lineSpacing: 20, valign: "top", shrinkText: true,
+        ...BULLETS_BOX,
+        fontSize: 13,
+        bullet: true,
+        lineSpacing: 18,
+        valign: "top",
+        shrinkText: true,
       });
     } catch {
-      // Fallback: manual bullets
       s.addText(itemsArr.map(b => `• ${b}`).join("\n"), {
-        x: 5.9, y: 5.05, w: 3.6, h: 1.7,
-        fontSize: 14, lineSpacing: 20, valign: "top", shrinkText: true,
+        ...BULLETS_BOX,
+        fontSize: 13,
+        lineSpacing: 18,
+        valign: "top",
+        shrinkText: true,
       });
     }
   }
 
-  // 5) spec link (fixed position)
+  // Footer line: code (left) + spec link (right)
+  if (p.code) {
+    s.addText(`Code: ${p.code}`, {
+      x: 0.5, y: 5.25, w: 4.8, h: 0.3,
+      fontSize: 12, color: "444444",
+    });
+  }
   if (p.pdfUrl) {
     s.addText("Spec Sheet (PDF)", {
-      x: 0.5, y: 6.45, w: 3.0, h: 0.35,
-      fontSize: 12, color: "1155CC",
+      x: 6.0, y: 5.25, w: 3.5, h: 0.3,
+      fontSize: 12, color: "1155CC", align: "right",
       hyperlink: { url: p.pdfUrl },
     });
   }
