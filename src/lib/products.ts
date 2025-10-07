@@ -22,7 +22,7 @@ function valuesToRows(values: string[][]): Row[] {
   });
 }
 
-/** Drive share -> direct */
+/** Google Drive share link -> direct-download URL */
 function toDirectImageUrl(u?: string) {
   if (!u) return u;
   const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
@@ -30,9 +30,8 @@ function toDirectImageUrl(u?: string) {
   return u;
 }
 
-/** NEW: find an image URL in ANY column */
+/** Find an image URL in ANY column (prefers common headers, then scans) */
 function findAnyImageUrl(row: Row): string | undefined {
-  // Prefer common headers first (cheap win)
   const preferred =
     pick(
       row,
@@ -43,14 +42,12 @@ function findAnyImageUrl(row: Row): string | undefined {
       "Photo",
       "Img",
       "Thumbnail",
-      "Main Image"
+      "Main Image",
+      "Primary Image"
     ) || undefined;
   if (preferred) return preferred;
 
-  // Fallback: scan all cells for something that looks like an image URL
-  const looksUrl = (s: string) =>
-    /^https?:\/\//i.test(s) || s.startsWith("/");
-
+  const looksUrl = (s: string) => /^https?:\/\//i.test(s) || s.startsWith("/");
   const looksImage = (s: string) =>
     /\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s) ||
     /drive\.google\.com\/file\/d\//i.test(s) ||
@@ -64,33 +61,53 @@ function findAnyImageUrl(row: Row): string | undefined {
   return undefined;
 }
 
-/** Map a row to Product */
+/** Map a sheet row to our Product shape */
 function mapRow(row: Row): Product {
   const name = pick(row, "Name", "Product", "Title");
   const code = pick(row, "SKU", "Code", "Item Code", "Product Code");
-  const description = pick(row, "Description", "Desc", "Blurb");
+  const description = pick(row, "Description", "Desc", "Blurb", "Long Description");
   const category = pick(row, "Category", "Categories");
-  const url = pick(row, "URL", "Link", "Page");
-const pdfUrl = pick(
-  row,
-  "PDF", "Spec", "Spec URL",
-  "Spec Sheet", "Spec sheet", "Spec sheet (PDF)",
-  "Specifications", "Specification", "Specs PDF"
-);
+  const url = pick(row, "URL", "Link", "Page", "Product Page", "Website");
+  const pdfUrl = pick(
+    row,
+    "PDF",
+    "Spec",
+    "Spec URL",
+    "Spec Sheet",
+    "Spec sheet",
+    "Spec sheet (PDF)",
+    "Specifications",
+    "Specification",
+    "Specs PDF",
+    "Datasheet",
+    "Data Sheet"
+  );
 
-
+  // Image handling
   const rawImg = findAnyImageUrl(row);
   const direct = toDirectImageUrl(rawImg);
-
-  // If it’s absolute (http) proxy it; if local (/foo.jpg) keep it
   const imageProxied =
     direct && /^https?:\/\//i.test(direct)
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
-  
 
-  const specsBullets = (pick(row, "Bullets", "Specs", "Features") || "")
-    .split(/\r?\n|•/g)
+  // Specs / bullets: accept many headers and separators
+  const bulletsRaw =
+    pick(
+      row,
+      "Bullets",
+      "Bullet Points",
+      "Specs",
+      "Specifications",
+      "Features",
+      "Feature Bullets",
+      "Key Features",
+      "Highlights",
+      "Selling Points"
+    ) || "";
+
+  const specsBullets = bulletsRaw
+    .split(/\r?\n|•|\u2022|;|,|—|–|-{1,2}/g) // newlines, bullet chars, semicolons, commas, dashes
     .map((s) => s.trim())
     .filter(Boolean);
 
