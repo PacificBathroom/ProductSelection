@@ -65,7 +65,7 @@ function MainProductPage() {
   useEffect(() => {
     (async () => {
       try {
-        const ps = await fetchProducts("Products!A:Z");
+       const ps = await fetchProducts("Products!A:ZZZ"); // grab columns past Z
         setItems(ps.map(augmentProductImages));
       } catch (e: any) {
         setErr(e?.message || "fetch error");
