@@ -226,4 +226,47 @@ export async function exportPptx({
       });
     }
 
-    // ----
+    // ---------- Spec slide (right after product) ----------
+    const specSlide = pptx.addSlide();
+    specSlide.addText(`${p.name || p.code || "—"} — Specifications`, {
+      x: 0.5, y: 0.5, w: 9, h: 0.8, fontSize: 28, bold: true, color: "0A3A6E",
+    });
+
+    const specUrl = findSpecImageUrl(p as any);
+    let specAdded = false;
+
+    if (specUrl) {
+      try {
+        const data = await urlToDataUrl(specUrl);
+        if (data) {
+          await addContainedImage(specSlide, data, { x: 0.8, y: 1.3, w: 8.6, h: 3.8 });
+          specAdded = true;
+        }
+      } catch {}
+    }
+
+    if (!specAdded) {
+      // fall back to the product image but clearly label it; this makes the issue visible
+      const fallback = imgUrl;
+      if (fallback) {
+        const data = await urlToDataUrl(fallback);
+        if (data) await addContainedImage(specSlide, data, { x: 0.8, y: 1.3, w: 8.6, h: 3.8 });
+      }
+      specSlide.addText(
+        "Spec drawing not found. Place an image at /public/specs/<SKU>.png (or .jpg/.webp).",
+        { x: 0.8, y: 5.3, w: 8.6, h: 0.8, fontSize: 14, color: "AA0000", align: "center" }
+      );
+    }
+  }
+
+  /* BACK PAGES */
+  for (const url of backImageUrls) {
+    const s = pptx.addSlide();
+    try {
+      const data = await urlToDataUrl(url);
+      if (data) s.background = { data };
+    } catch {}
+  }
+
+  await pptx.writeFile({ fileName: `${projectName || "Product Selection"}.pptx` });
+}
