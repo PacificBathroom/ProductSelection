@@ -213,34 +213,28 @@ export async function exportPptx({
     }
 
    // Specs bullets – super-compatible run array + para spacing
-const bullets = deriveBulletsFromProduct(p as any);
-
-// DEBUG: see what we derived in the browser console
-try { console.log("[PPTX] bullets for", p.name || p.code, bullets); } catch {}
-
-if (bullets.length) {
-  anyBullets = true;
-  const runs = bullets.map(text => ({
-    text,
-    options: { bullet: true }  // per-item bullet flag
-  }));
-  s.addText(runs, {
-    ...BUL_BOX,
-    fontSize: 13,
-    lineSpacing: 18,
-    valign: "top",
-    shrinkText: true,
-    paraSpaceBefore: 0,
-    paraSpaceAfter: 6,
-  });
-} else {
-  s.addText("Specifications: n/a", {
-    ...BUL_BOX,
-    fontSize: 12,
-    color: "888888",
-    valign: "top",
-  });
-}
+   // Specs bullets – use ARRAY FORM (pptxgenjs bullet-safe)
+    const bullets = deriveBulletsFromProduct(p as any);
+    if (bullets.length) {
+      anyBullets = true;
+      s.addText(
+        bullets.map(text => ({ text, options: { bullet: true } })), // <- key change
+        {
+          ...BUL_BOX,
+          fontSize: 13,
+          lineSpacing: 18,
+          valign: "top",
+          shrinkText: true,
+        }
+      );
+    } else {
+      s.addText("Specifications: n/a", {
+        ...BUL_BOX,
+        fontSize: 12,
+        color: "888888",
+        valign: "top",
+      });
+    }
 
 
     // Footer: code + spec link
