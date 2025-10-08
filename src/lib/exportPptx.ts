@@ -1,304 +1,296 @@
-// src/lib/exportPptx.ts
-import type { Product } from "../types";
-import PptxGenJS from "pptxgenjs";
+// src/App.tsx
+import React, { useEffect, useMemo, useState } from "react";
+import type { Product } from "./types";
+import { fetchProducts } from "./lib/products";
+import { exportPptx } from "./lib/exportPptx";
+import { SettingsProvider, useSettings } from "./state/SettingsProvider";
+import SettingsBridge from "./state/SettingsBridge";
+import ContactProjectForm from "./components/ContactProjectForm";
 
-/* ---------- Types ---------- */
-export type ExportArgs = {
-  projectName?: string;
-  clientName?: string;
-  contactName?: string;  // shown as "Your contact"
-  company?: string;
-  email?: string;
-  phone?: string;
-  date?: string;
-  items: Product[];
-  coverImageUrls?: string[]; // background(s) for first slide (use [0])
-  backImageUrls?: string[];  // extra back pages
-};
+/* ---------- helpers ---------- */
+const textIncludes = (hay: string | undefined, needle: string) =>
+  (hay ?? "").toLowerCase().includes(needle.toLowerCase());
 
-/* ---------- Helpers ---------- */
+const keyOf = (p: Product) =>
+  (p.code || p.name || "") + "::" + ((p as any).url || "");
 
-// fetch URL -> data:URL (works for same-origin and proxied URLs)
-async function urlToDataUrl(url: string): Promise<string | undefined> {
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return undefined;
-    const blob = await res.blob();
-    return await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onerror = () => reject(new Error("FileReader failed"));
-      r.onload = () => resolve(String(r.result));
-      r.readAsDataURL(blob);
-    });
-  } catch {
-    return undefined;
+const safeTitle = (s?: string) => (s ?? "").trim() || "—";
+
+/** Detect the best image field and ensure a proxied copy exists */
+function detectImageUrl(p: any): string | undefined {
+  const fields = [
+    p.imageProxied,
+    p.imageUrl,
+    p.image,
+    p.img,
+    p.thumbnail,
+    p.picture,
+  ].filter(Boolean);
+  if (fields.length > 0) return fields[0];
+
+  for (const v of Object.values(p)) {
+    const s = String(v || "").trim();
+    if (/\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s)) return s;
+    if (/drive\.google\.com\/file\/d\//i.test(s)) return s;
   }
+  return undefined;
 }
 
-function fitIntoBox(
-  imgW: number,
-  imgH: number,
-  x: number,
-  y: number,
-  w: number,
-  h: number
-) {
-  const rImg = imgW / imgH;
-  const rBox = w / h;
-  let outW: number, outH: number;
-  if (rImg >= rBox) {
-    outW = w;
-    outH = outW / rImg;
-  } else {
-    outH = h;
-    outW = outH * rImg;
-  }
-  return { x: x + (w - outW) / 2, y: y + (h - outH) / 2, w: outW, h: outH };
+function toDirectImageUrl(u?: string) {
+  if (!u) return u;
+  const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
+  if (m) return `https://drive.google.com/uc?export=download&id=${m[1]}`;
+  return u;
 }
 
-async function getImageDims(dataUrl: string): Promise<{ w: number; h: number } | undefined> {
-  try {
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise<void>((ok, err) => {
-      img.onload = () => ok();
-      img.onerror = () => err(new Error("image load error"));
-    });
-    return { w: img.naturalWidth, h: img.naturalHeight };
-  } catch { return undefined; }
+function augmentProductImages(p: Product): Product {
+  const raw = detectImageUrl(p);
+  const direct = toDirectImageUrl(raw);
+  const imageProxied =
+    direct && /^https?:\/\//i.test(direct)
+      ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
+      : direct;
+  return { ...p, imageProxied };
 }
 
-async function addContainedImage(
-  slide: any,
-  dataUrl: string,
-  box: { x: number; y: number; w: number; h: number }
-) {
-  const dims = await getImageDims(dataUrl);
-  if (!dims) {
-    slide.addImage({ data: dataUrl, ...box } as any);
-    return;
-  }
-  slide.addImage({ data: dataUrl, ...fitIntoBox(dims.w, dims.h, box.x, box.y, box.w, box.h) } as any);
-}
+/* ---------- main section ---------- */
+function MainProductPage() {
+  const { contact, project } = useSettings();
+  const [items, setItems] = useState<Product[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
-/** Split text into likely bullet points */
-function splitBullets(s: string): string[] {
-  return s
-    .split(/\r?\n|•|\u2022|;|,|\||\/|—|–|\s-\s|^-| - |-{1,2}/gm)
-    .map(t => t.replace(/^[•\u2022\-–—]\s*/, "").trim())
-    .filter(Boolean);
-}
-
-/** Keep first appearance of each (case-insensitive) */
-function uniqueKeepOrder(arr: string[]) {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const x of arr) {
-    const k = x.toLowerCase();
-    if (!seen.has(k)) { seen.add(k); out.push(x); }
-  }
-  return out;
-}
-
-/** Derive bullets from any likely field, not only `specsBullets`. */
-function deriveBulletsFromProduct(p: any): string[] {
-  if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
-    return uniqueKeepOrder(p.specsBullets.map(String)).slice(0, 10);
-  }
-  const candidates: string[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    const key = String(k).toLowerCase();
-    if (!/(spec|feature|bullet|point|highlight|detail|benefit)/.test(key)) continue;
-    if (Array.isArray(v)) {
-      for (const item of v) {
-        const s = String(item || "").trim();
-        if (s) candidates.push(s);
-      }
-    } else if (typeof v === "string") {
-      candidates.push(...splitBullets(v));
-    }
-  }
-  if (!candidates.length && typeof p.description === "string") {
-    candidates.push(...splitBullets(p.description));
-  }
-  return uniqueKeepOrder(candidates).slice(0, 10);
-}
-
-// Try to guess a preview image that sits next to the PDF in /public/specs
-function guessPreviewFromPdf(pdfUrl?: string): string | undefined {
-  if (!pdfUrl) return;
-  const last = pdfUrl.split("/").pop() || "";
-  const base = last.replace(/\.pdf(\?.*)?$/i, "");
-  if (!base) return;
-  const stems = [base, base.replace(/\s+/g, "_"), base.replace(/\s+/g, "")];
-  const exts = ["png", "jpg", "jpeg", "webp"];
-  for (const s of stems) for (const e of exts) return `/specs/${s}.${e}`;
-  return;
-}
-
-/* ---------- Main ---------- */
-export async function exportPptx({
-  projectName = "Product Presentation",
-  clientName = "",
-  contactName = "",
-  company = "",
-  email = "",
-  phone = "",
-  date = "",
-  items,
-  coverImageUrls = ["/branding/cover.jpg"],
-  backImageUrls = ["/branding/warranty.jpg", "/branding/service.jpg"],
-}: ExportArgs) {
-  const pptx = new PptxGenJS();
-
-  /* COVER */
-  const sCover = pptx.addSlide();
-  try {
-    const coverSrc = coverImageUrls[0];
-    if (coverSrc) {
-      const coverBg = await urlToDataUrl(coverSrc);
-      if (coverBg) sCover.background = { data: coverBg };
-    }
-  } catch {}
-  sCover.addText(projectName || "Product Presentation", {
-    x: 0.5, y: 0.8, w: 9, h: 0.8, fontSize: 28, bold: true, color: "003366",
-  });
-  const lines: string[] = [];
-  if (clientName) lines.push(`Client: ${clientName}`);
-  if (contactName) lines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
-  if (email) lines.push(`Email: ${email}`);
-  if (phone) lines.push(`Phone: ${phone}`);
-  if (date) lines.push(`Date: ${date}`);
-  if (lines.length) {
-    sCover.addText(lines.join("\n"), {
-      x: 0.5, y: 1.7, w: 9, h: 2.0, fontSize: 18, color: "333333", lineSpacing: 20,
-    });
-  }
-
-  /* PRODUCT SLIDES (image left, text right) */
-  for (const p of items) {
-    const s = pptx.addSlide();
-
-    s.addText(p.name || p.code || "Untitled Product", {
-      x: 0.5, y: 0.35, w: 9.0, h: 0.6,
-      fontSize: 26, bold: true, color: "003366",
-    });
-
-    const IMG_BOX  = { x: 0.5, y: 1.05, w: 5.2, h: 3.9 };
-    const RIGHT_X  = 6.0;
-    const RIGHT_W  = 3.5;
-    const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 1.9 };
-    const BUL_BOX  = { x: RIGHT_X, y: 3.05, w: RIGHT_W, h: 2.0 };
-
-    const imgUrl = (p as any).imageProxied || (p as any).imageUrl || (p as any).image;
-    if (imgUrl) {
+  useEffect(() => {
+    (async () => {
       try {
-        const data = await urlToDataUrl(imgUrl);
-        if (data) await addContainedImage(s, data, IMG_BOX);
-      } catch {}
-    }
+        // wide range to make sure we read every possible “specs/features” column
+        const ps = await fetchProducts("Products!A:ZZZ");
+        setItems(ps.map(augmentProductImages));
+      } catch (e: any) {
+        setErr(e?.message || "fetch error");
+      }
+    })();
+  }, []);
 
-    if (p.description) {
-      s.addText(p.description, {
-        ...DESC_BOX,
-        fontSize: 13,
-        color: "444444",
-        lineSpacing: 18,
-        valign: "top",
-        shrinkText: true,
-      });
-    }
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const selectedList = useMemo(
+    () => (items ?? []).filter((p) => selected[keyOf(p)]),
+    [items, selected]
+  );
+  const toggle = (p: Product) =>
+    setSelected((s) => ({ ...s, [keyOf(p)]: !s[keyOf(p)] }));
 
-    const bullets = deriveBulletsFromProduct(p as any);
-    if (bullets.length) {
-      s.addText(
-        bullets.map(text => ({ text, options: { bullet: true } })),
-        {
-          ...BUL_BOX,
-          fontSize: 13,
-          lineSpacing: 18,
-          valign: "top",
-          shrinkText: true,
-          paraSpaceBefore: 0,
-          paraSpaceAfter: 6,
-        }
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("All");
+  const [sort, setSort] = useState<"sheet" | "name">("sheet");
+
+  const categories = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of items ?? [])
+      if ((p as any).category) s.add((p as any).category);
+    return ["All", ...Array.from(s).sort()];
+  }, [items]);
+
+  const visible = useMemo(() => {
+    let a = [...(items ?? [])];
+    if (q) {
+      a = a.filter(
+        (p: any) =>
+          textIncludes(p.name, q) ||
+          textIncludes(p.code, q) ||
+          textIncludes(p.description, q) ||
+          textIncludes(p.category, q)
       );
     }
+    if (cat !== "All") a = a.filter((p: any) => p.category === cat);
+    if (sort === "name")
+      a.sort((x: any, y: any) => (x.name || "").localeCompare(y.name || ""));
+    return a;
+  }, [items, q, cat, sort]);
 
-    if (p.code) {
-      s.addText(`Code: ${p.code}`, {
-        x: 0.5, y: 5.25, w: 4.8, h: 0.3,
-        fontSize: 12, color: "444444",
-      });
-    }
-    if (p.pdfUrl) {
-      s.addText("Spec Sheet (PDF)", {
-        x: 6.0, y: 5.25, w: 3.5, h: 0.3,
-        fontSize: 12, color: "1155CC", align: "right",
-        hyperlink: { url: p.pdfUrl },
-      });
-    }
-  }
-
-  /* SPECIFICATION SLIDES (one per product) */
-  for (const p of items) {
-    const s = pptx.addSlide();
-
-    s.addText(`${p.name || p.code || "—"} — Specifications`, {
-      x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 24, bold: true, color: "003366",
-    });
-
-    // Left: big bullets column
-    const bullets = deriveBulletsFromProduct(p as any);
-    if (bullets.length) {
-      s.addText(
-        bullets.map(text => ({ text, options: { bullet: true } })),
-        { x: 0.5, y: 1.2, w: 5.0, h: 4.2, fontSize: 14, lineSpacing: 20, valign: "top", shrinkText: true }
-      );
-    } else {
-      s.addText("No specifications available.", {
-        x: 0.5, y: 1.2, w: 5.0, h: 1.0, fontSize: 14, color: "888888",
-      });
+  async function onExportClick() {
+    const list = selectedList.length ? selectedList : visible;
+    if (!list.length) {
+      alert("No products to export.");
+      return;
     }
 
-    // Right: PDF preview image if we can guess it, else product image fallback
-    const previewGuess = guessPreviewFromPdf(p.pdfUrl);
-    let placedPreview = false;
-    if (previewGuess) {
-      try {
-        const data = await urlToDataUrl(previewGuess);
-        if (data) {
-          await addContainedImage(s, data, { x: 5.6, y: 1.2, w: 3.8, h: 3.8 });
-          placedPreview = true;
-        }
-      } catch {}
-    }
-    if (!placedPreview) {
-      const imgUrl = (p as any).imageProxied || (p as any).imageUrl || (p as any).image;
-      if (imgUrl) {
-        try {
-          const data = await urlToDataUrl(imgUrl);
-          if (data) await addContainedImage(s, data, { x: 5.6, y: 1.2, w: 3.8, h: 3.8 });
-        } catch {}
-      }
-    }
-
-    if (p.pdfUrl) {
-      s.addText("Open Spec PDF", {
-        x: 5.6, y: 5.2, w: 3.8, h: 0.4, fontSize: 12, color: "1155CC", align: "right",
-        hyperlink: { url: p.pdfUrl },
-      });
-    }
-  }
-
-  /* BACK PAGES */
-  for (const url of backImageUrls) {
-    const s = pptx.addSlide();
     try {
-      const data = await urlToDataUrl(url);
-      if (data) s.background = { data };
-    } catch {}
+      // Export PowerPoint
+      await exportPptx({
+        projectName: project.projectName || "Product Presentation",
+        clientName: project.clientName || "",
+        contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+        company: contact.company,
+        email: contact.email,
+        phone: contact.phone,
+        date: project.presentationDate || "",
+        items: list,
+        coverImageUrls: ["/branding/cover.jpg"],
+        backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
+      });
+
+      // Clear UI selections/filters
+      setSelected({});
+      setQ("");
+      setCat("All");
+      setSort("sheet");
+
+      // Clear any persisted form state then refresh to show cleared form
+      try {
+        localStorage.removeItem("selectedProductIds");
+        localStorage.removeItem("settings");
+        localStorage.removeItem("contact");
+        localStorage.removeItem("project");
+      } catch {}
+      window.location.reload();
+    } catch (e: any) {
+      console.error("Export failed", e);
+      alert("Export failed: " + (e?.message || e));
+    }
   }
 
-  await pptx.writeFile({ fileName: `${projectName || "Product Selection"}.pptx` });
+  return (
+    <>
+      {/* toolbar */}
+      <div className="toolbar">
+        <div className="toolbar-left">
+          <input
+            className="search"
+            placeholder="Search products, SKU, description..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <select
+            className="category"
+            value={cat}
+            onChange={(e) => setCat(e.target.value)}
+          >
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <select
+            className="sort"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as "sheet" | "name")}
+          >
+            <option value="sheet">Sheet order</option>
+            <option value="name">Name (A–Z)</option>
+          </select>
+        </div>
+        <div className="toolbar-right">
+          <span className="muted">Selected: {selectedList.length}</span>
+          <button className="primary" onClick={onExportClick}>
+            Export PPTX
+          </button>
+        </div>
+      </div>
+
+      {err && <p className="error">Error: {err}</p>}
+      {!items && !err && <p className="muted">Loading…</p>}
+
+      <div className="grid">
+        {(visible ?? []).map((p: any, i: number) => {
+          const k = keyOf(p);
+          const isSel = !!selected[k];
+          const pdfUrl = p.pdfUrl;
+          const pageUrl = p.url;
+
+          return (
+            <div
+              className={"card product" + (isSel ? " selected" : "")}
+              key={k + i}
+            >
+              <label className="checkbox">
+                <input
+                  type="checkbox"
+                  checked={isSel}
+                  onChange={() => toggle(p)}
+                />
+              </label>
+
+              <div className="thumb">
+                {p.imageProxied || p.imageUrl || p.image ? (
+                  <img
+                    src={p.imageProxied || p.imageUrl || p.image}
+                    alt={p.name || p.code || "product"}
+                  />
+                ) : (
+                  <div className="ph">No image</div>
+                )}
+              </div>
+
+              <div className="body">
+                <div className="name">{safeTitle(p.name)}</div>
+                {p.code && <div className="sku">SKU: {p.code}</div>}
+                {p.description && <p className="desc">{p.description}</p>}
+
+                {p.specsBullets?.length > 0 ? (
+                  <ul className="specs">
+                    {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
+                      <li key={j}>{s}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="muted">No specs parsed</div>
+                )}
+
+                <div className="links">
+                  {pageUrl && (
+                    <a href={pageUrl} target="_blank" rel="noreferrer">
+                      Product page
+                    </a>
+                  )}
+                  {pdfUrl && (
+                    <a
+                      href={`/api/pdf-proxy?url=${encodeURIComponent(pdfUrl)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Spec sheet (PDF)
+                    </a>
+                  )}
+                </div>
+
+                {p.category && (
+                  <div className="category">Category: {p.category}</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+/* ---------- wrapper ---------- */
+export default function App() {
+  return (
+    <SettingsProvider>
+      <SettingsBridge />
+      <main className="container">
+        <header className="page-header">
+          <h1 className="page-title">Project Setup</h1>
+        </header>
+
+        <div className="grid-2">
+          <div className="card form">
+            <ContactProjectForm />
+          </div>
+          <div className="card info">
+            <p className="muted">
+              Fill in your contact &amp; project details on the left, then pick
+              products below. Use the search and filters to narrow down, tick
+              items, and click <strong>Export PPTX</strong>.
+            </p>
+          </div>
+        </div>
+
+        <MainProductPage />
+      </main>
+    </SettingsProvider>
+  );
 }
