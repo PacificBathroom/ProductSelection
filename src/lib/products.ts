@@ -31,7 +31,7 @@ function pickCI(row: Row, ...keys: string[]) {
   return undefined;
 }
 
-/** Google Drive share link -> direct-download URL */
+/** Google Drive share -> direct-download URL */
 function toDirectImageUrl(u?: string) {
   if (!u) return u;
   const m = u.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
@@ -39,7 +39,7 @@ function toDirectImageUrl(u?: string) {
   return u;
 }
 
-/** Find an image URL in ANY column (prefers common headers, then scans) */
+/** Find an image URL in ANY column */
 function findAnyImageUrl(row: Row): string | undefined {
   const r = normalizeRow(row);
   const preferredKeys = [
@@ -65,7 +65,7 @@ function findAnyImageUrl(row: Row): string | undefined {
   return undefined;
 }
 
-/** Split a list-like string into bullets (now includes pipes | and slashes /) */
+/** Split possible list text into bullets (handles pipes and slashes too) */
 function splitBullets(s: string): string[] {
   return s
     .split(/\r?\n|•|\u2022|;|,|\||\/|—|–|\s-\s|^-| - |-{1,2}/gm)
@@ -73,7 +73,7 @@ function splitBullets(s: string): string[] {
     .filter(Boolean);
 }
 
-/** Pull bullets from common single text columns */
+/** Collect bullets from a single rich text column */
 function bulletsFromSingleColumns(row: Row): string[] {
   const raw =
     pickCI(
@@ -96,7 +96,7 @@ function bulletsFromSingleColumns(row: Row): string[] {
   return splitBullets(raw);
 }
 
-/** Pull bullets from multiple numbered columns (Spec 1..20, Feature 1..20, etc.) */
+/** Collect bullets from numbered columns (Spec 1.., Feature 2.. etc.) */
 function bulletsFromNumberedColumns(row: Row): string[] {
   const r = normalizeRow(row);
   const vals: string[] = [];
@@ -113,13 +113,9 @@ function bulletsFromNumberedColumns(row: Row): string[] {
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
     const k = key.toLowerCase();
-
-    // Accept headers that contain a prefix and either:
-    //  - a number (Spec 1, Specs2, Feature_03)
-    //  - or look like a short spec field (e.g., "Spec A")
-    const hasPrefix = prefixes.some((p) => k.includes(p));
+    const hasPrefix = prefixes.some((p) => k.startsWith(p));
     const hasOrdinal = /\d{1,2}\b/.test(k) || /\b[a-z]\b/.test(k);
-    if (hasPrefix && (hasOrdinal || /^spec(s|ification|ifications)?$/.test(k))) {
+    if (hasPrefix && hasOrdinal) {
       const t = String(val).trim();
       if (t) vals.push(t);
     }
@@ -127,14 +123,31 @@ function bulletsFromNumberedColumns(row: Row): string[] {
   return vals;
 }
 
-/** Heuristic: If nothing else, pick a column that looks list-like */
+/** NEW: Collect bullets from ANY column whose header includes spec/feature/bullet… even if not numbered */
+function bulletsFromFuzzyColumns(row: Row): string[] {
+  const r = normalizeRow(row);
+  const vals: string[] = [];
+  const fuzzy = /(spec|feature|bullet|point|highlight|detail|benefit)/i;
+
+  for (const [key, val] of Object.entries(r)) {
+    if (!val) continue;
+    const k = key.toLowerCase();
+    // avoid obvious fields that aren't bullet lists
+    if (/(image|url|link|page|pdf|code|sku|name|title|category|desc|description)/i.test(k)) continue;
+    if (fuzzy.test(k)) {
+      vals.push(String(val));
+    }
+  }
+  return vals.flatMap(splitBullets);
+}
+
+/** Heuristic: last resort — find the most list-like column or carve from description */
 function bulletsAutoDetect(row: Row, description?: string): string[] {
   const r = normalizeRow(row);
   let best: string[] = [];
 
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
-    // Skip obvious non-list fields
     if (/(name|title|sku|code|category|url|link|page|pdf|spec url|desc|description|image)/i.test(key)) {
       continue;
     }
@@ -144,7 +157,6 @@ function bulletsAutoDetect(row: Row, description?: string): string[] {
 
   if (best.length) return best;
 
-  // fallback: try description
   if (description) {
     const parts = splitBullets(description);
     if (parts.length >= 2) return parts;
@@ -152,7 +164,7 @@ function bulletsAutoDetect(row: Row, description?: string): string[] {
   return [];
 }
 
-/** Map a sheet row to our Product shape */
+/** Map a sheet row to Product */
 function mapRow(row: Row): Product {
   const name = pickCI(row, "Name", "Product", "Title");
   const code = pickCI(row, "SKU", "Code", "Item Code", "Product Code");
@@ -182,13 +194,14 @@ function mapRow(row: Row): Product {
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
 
-  // Bullets (merge all sources)
-  const bulletsNum = bulletsFromNumberedColumns(row);
-  const bulletsSingle = bulletsFromSingleColumns(row);
-  const bulletsAuto = bulletsAutoDetect(row, description);
+  // Bullets: merge every source we can think of
+  const bulletsNum   = bulletsFromNumberedColumns(row);
+  const bulletsSingle= bulletsFromSingleColumns(row);
+  const bulletsFuzzy = bulletsFromFuzzyColumns(row);
+  const bulletsAuto  = bulletsAutoDetect(row, description);
 
-  const specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsAuto]
-    .flatMap(splitBullets) // in case a numbered cell has multiple items separated by "|" etc.
+  const specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsFuzzy, ...bulletsAuto]
+    .flatMap(splitBullets)
     .map((b) => b.trim())
     .filter(Boolean);
 
