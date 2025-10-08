@@ -2,7 +2,15 @@
 import type { Product } from "../types";
 import { store } from "../state/storeAccess";
 
-/* ------------------------------ constants ------------------------------ */
+/**
+ * Assumptions about Product fields used here:
+ * - p.name?: string
+ * - p.description?: string
+ * - p.code?: string               // SKU
+ * - p.specsBullets?: string[]     // bullet points
+ * - p.imageProxied?: string       // same-origin/proxied image URL
+ * - (p as any).pdfUrl?: string    // spec PDF URL (map your sheet field if different)
+ */
 
 const FULL_W = 10;     // pptxgen 16:9 width (in)
 const FULL_H = 5.625;  // pptxgen 16:9 height (in)
@@ -10,37 +18,11 @@ const FULL_H = 5.625;  // pptxgen 16:9 height (in)
 const COVER_URLS = ["/branding/cover.jpg"]; // first entry used as cover background
 const BACK_URLS  = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
-/* -------------------------------- types -------------------------------- */
+/* ---------------------------------- helpers ---------------------------------- */
 
-export type ExportArgs = {
-  projectName?: string;
-
-  clientName?: string;
-  clientAddress?: string;
-
-  contactName?: string;
-  contactAddress?: string;
-
-  email?: string;
-  phone?: string;
-
-  date?: string;
-
-  salesRepName?: string;
-  salesRepEmail?: string;
-  salesRepPhone?: string;
-
-  quoteNumber?: string;
-  reference?: string;
-  notes?: string;
-
-  // Arbitrary extra fields from the app (key -> value)
-  extra?: Record<string, string | undefined>;
-
-  items: Product[];
-};
-
-/* ------------------------------- helpers ------------------------------- */
+function sanitizeFilename(name: string) {
+  return (name || "Presentation").replace(/[^\w.-]+/g, "_");
+}
 
 // Same-origin or proxied URL -> data URL
 async function urlToDataUrl(url: string): Promise<string> {
@@ -133,24 +115,60 @@ async function findSpecPreviewUrl(pdfUrl?: string, sku?: string): Promise<string
   return;
 }
 
-// Accept many possible field names for spec PDFs
-function coalescePdfUrl(p: any): string | undefined {
-  return (
-    p.pdfUrl ||
-    p.specPdf ||
-    p.specPDF ||
-    p.spec ||
-    p.specSheet ||
-    p["Spec PDF"] ||
-    p["Spec sheet"] ||
-    p["Spec sheet (PDF)"] ||
-    p["PDF"] ||
-    undefined
-  );
+/* ----------------------------------- types ----------------------------------- */
+
+export type ExportArgs = {
+  projectName?: string;
+
+  clientName?: string;
+  clientAddress?: string;
+
+  contactName?: string;
+  contactAddress?: string;
+
+  email?: string;
+  phone?: string;
+
+  date?: string;
+
+  salesRepName?: string;
+  salesRepEmail?: string;
+  salesRepPhone?: string;
+
+  quoteNumber?: string;
+  reference?: string;
+  notes?: string;
+
+  // Arbitrary extra fields from the app (key -> value)
+  extra?: Record<string, string | undefined>;
+
+  items: Product[];
+};
+
+/* ------------------------------- public APIs --------------------------------- */
+
+/**
+ * Convenience: build from your app state (`storeAccess`) and product list.
+ * Call this from React, e.g. on a button click.
+ */
+export async function exportDeckFromStore(items: Product[]) {
+  const { contact, project } = store.get();
+  return exportPptx({
+    projectName: project.projectName || "Product Presentation",
+    clientName: project.clientName || "",
+    date: project.presentationDate || "",
+    contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+    email: contact.email,
+    phone: contact.phone,
+    // company on cover as part of the detail block:
+    extra: { Company: contact.company },
+    items,
+  });
 }
 
-/* --------------------------------- main --------------------------------- */
-
+/**
+ * Low-level API: pass everything explicitly (used internally by exportDeckFromStore).
+ */
 export async function exportPptx({
   projectName = "Product Presentation",
 
@@ -179,7 +197,7 @@ export async function exportPptx({
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  /* ---------------------------------- COVER --------------------------------- */
+  /* ---------------------------------- COVER ---------------------------------- */
 
   if (COVER_URLS[0]) {
     try {
@@ -237,10 +255,9 @@ export async function exportPptx({
       const s = pptx.addSlide();
 
       // Large product image on the left
-      if ((p as any).imageProxied || (p as any).imageUrl) {
+      if (p.imageProxied) {
         try {
-          const src = (p as any).imageProxied || (p as any).imageUrl;
-          const imgData = await urlToDataUrl(src);
+          const imgData = await urlToDataUrl(p.imageProxied);
           await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
         } catch { /* continue without image */ }
       }
@@ -270,8 +287,8 @@ export async function exportPptx({
       }
     }
 
-    // ---- Specification slide (robust)
-    const pdfUrl: string | undefined = coalescePdfUrl(p as any);
+    // ---- Spec slide (try when we have a PDF URL)
+    const pdfUrl: string | undefined = (p as any).pdfUrl;
     if (pdfUrl) {
       const s2 = pptx.addSlide();
       s2.addText(`${p.name || "—"} — Specifications`, {
@@ -279,30 +296,14 @@ export async function exportPptx({
       });
 
       let addedImage = false;
-
-      // 1) Explicit preview image if provided on the product
-      const explicitPreview: string | undefined =
-        (p as any).specPreviewUrl || (p as any).imagePreviewUrl;
-
       try {
-        if (explicitPreview) {
-          const prevData = await urlToDataUrl(explicitPreview);
+        const previewUrl = await findSpecPreviewUrl(pdfUrl, p.code);
+        if (previewUrl) {
+          const prevData = await urlToDataUrl(previewUrl);
           await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
           addedImage = true;
         }
-      } catch { /* ignore and try auto-discovery */ }
-
-      // 2) Otherwise, try to auto-discover an image beside the PDF in /public/specs
-      if (!addedImage) {
-        try {
-          const previewUrl = await findSpecPreviewUrl(pdfUrl, p.code);
-          if (previewUrl) {
-            const prevData = await urlToDataUrl(previewUrl);
-            await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
-            addedImage = true;
-          }
-        } catch { /* fall through */ }
-      }
+      } catch { /* fall back */ }
 
       // Always add a clickable link to the source PDF (top-right under title)
       try {
@@ -316,9 +317,7 @@ export async function exportPptx({
 
       if (!addedImage) {
         s2.addText(
-          "Spec preview image not found.\n" +
-            "Tip: add PNG/JPG to /public/specs using the PDF’s basename (e.g. PMB420.png),\n" +
-            "or set product.specPreviewUrl.",
+          "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, e.g. PMB420.png).",
           { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
         );
       }
@@ -335,36 +334,24 @@ export async function exportPptx({
     } catch { /* ignore */ }
   }
 
-  const filename = `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`;
+  const filename = `${sanitizeFilename(projectName || "Product_Presentation")}.pptx`;
   await pptx.writeFile({ fileName: filename });
 }
 
-/* ---------------------------- convenience wrappers --------------------------- */
-
-/** Use the current app state (contact/project) from the store. */
-export async function exportDeckFromStore(items: Product[]) {
-  const { contact, project } = store.get();
-  return exportPptx({
-    projectName: project.projectName || "Product Presentation",
-    clientName: project.clientName || "",
-    contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
-    email: contact.email || "",
-    phone: contact.phone || "",
-    date: project.presentationDate || "",
-    items,
-  });
-}
-
-/** Legacy zero-arg wrapper; exports a cover-only deck using current store state. */
+/* ------------------------------ legacy wrapper ------------------------------- */
+/**
+ * If you previously called `exportDeck()` without args, this keeps a simple
+ * cover-only export using store values (no products). Prefer exportDeckFromStore.
+ */
 export async function exportDeck() {
   const { contact, project } = store.get();
   return exportPptx({
     projectName: project.projectName || "Product Presentation",
     clientName: project.clientName || "",
-    contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
-    email: contact.email || "",
-    phone: contact.phone || "",
     date: project.presentationDate || "",
-    items: [],
+    contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+    email: contact.email,
+    phone: contact.phone,
+    items: [], // no products in this legacy path
   });
 }
