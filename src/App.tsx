@@ -65,7 +65,7 @@ function MainProductPage() {
   useEffect(() => {
     (async () => {
       try {
-       const ps = await fetchProducts("Products!A:ZZZ"); // grab columns past Z
+      const ps = await fetchProducts("Products!A:ZZZ"); // not just A:Z
         setItems(ps.map(augmentProductImages));
       } catch (e: any) {
         setErr(e?.message || "fetch error");
@@ -230,15 +230,15 @@ function MainProductPage() {
                 {p.code && <div className="sku">SKU: {p.code}</div>}
                 {p.description && <p className="desc">{p.description}</p>}
 
-                {p.specsBullets?.length > 0 ? (
-                  <ul className="specs">
-                    {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
-                      <li key={j}>{s}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="muted">No specs parsed</div>
-                )}
+               {p.specsBullets?.length > 0 ? (
+  <ul className="specs">
+    {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
+      <li key={j}>{s}</li>
+    ))}
+  </ul>
+) : (
+  <div className="muted">No specs parsed</div>
+)}
 
                 <div className="links">
                   {pageUrl && (
