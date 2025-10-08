@@ -1,4 +1,3 @@
-// src/lib/products.ts
 import type { Product } from "../types";
 
 /* ---------- helpers ---------- */
@@ -121,13 +120,14 @@ function bulletsFromNumberedColumns(row: Row): string[] {
     "point","points",
     "highlight","highlights",
     "detail","details",
-    "benefit","benefits"
+    "benefit","benefits",
+    "item","items"
   ];
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
     const k = key.toLowerCase();
     const hasPrefix = prefixes.some((p) => k.startsWith(p));
-    const hasOrdinal = /\b\d{1,2}\b/.test(k) || /\b[a-z]\b/.test(k);
+    const hasOrdinal = /\b(\d{1,2}|[a-z])\b/.test(k);
     if (hasPrefix && hasOrdinal) {
       const t = String(val).trim();
       if (t) vals.push(t);
@@ -150,23 +150,21 @@ function bulletsFromFuzzyColumns(row: Row): string[] {
   return vals.flatMap(splitBullets);
 }
 
-/** Heuristic: pick the most list-like column; else carve from description */
-function bulletsAutoDetect(row: Row, description?: string): string[] {
+/** Very aggressive fallback: scan all non-obvious columns and carve a list */
+function bulletsFromAnyUsefulColumn(row: Row, description?: string): string[] {
   const r = normalizeRow(row);
-  let best: string[] = [];
+  const vals: string[] = [];
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
-    if (/(name|title|sku|code|category|url|link|page|pdf|spec url|desc|description|image)/i.test(key)) {
-      continue;
-    }
+    const k = key.toLowerCase();
+    if (/(image|url|link|page|pdf|code|sku|name|title|category)/i.test(k)) continue;
+    // allow description to be used as a last resort; prioritize other fields first
+    if (/^desc(ription)?$/.test(k)) continue;
     const parts = splitBullets(String(val));
-    if (parts.length >= 2 && parts.length > best.length) best = parts;
+    if (parts.length) vals.push(...parts);
   }
-  if (best.length) return best;
-  if (description) {
-    const parts = splitBullets(description);
-    if (parts.length >= 2) return parts;
-  }
+  if (vals.length) return vals;
+  if (description) return splitBullets(description);
   return [];
 }
 
@@ -203,22 +201,30 @@ function mapRow(row: Row): Product & {
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
 
-  // Bullets: merge every source
-  const bulletsNum    = bulletsFromNumberedColumns(row);
-  const bulletsSingle = bulletsFromSingleColumns(row);
-  const bulletsFuzzy  = bulletsFromFuzzyColumns(row);
-  const bulletsAuto   = bulletsAutoDetect(row, description);
+  // Bullets: merge every source (ordered by precision)
+  const bulletsNum    = bulletsFromNumberedColumns(row);       // Spec 1, Feature 2, ...
+  const bulletsSingle = bulletsFromSingleColumns(row);          // "Features", "Highlights", ...
+  const bulletsFuzzy  = bulletsFromFuzzyColumns(row);           // any header containing spec/feature/...
+  const bulletsAny    = bulletsFromAnyUsefulColumn(row, description); // last resort across all
 
-  let specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsFuzzy, ...bulletsAuto]
-    .flatMap(splitBullets)
+  let specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsFuzzy, ...bulletsAny]
     .map((b) => b.trim())
     .filter(Boolean);
+
+  // Deduplicate while preserving order
+  const seen = new Set<string>();
+  specsBullets = specsBullets.filter((b) => {
+    const key = b.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   let __debugSpecSource = "";
   if (bulletsNum.length)    __debugSpecSource += "[numbered]";
   if (bulletsSingle.length) __debugSpecSource += "[single]";
   if (bulletsFuzzy.length)  __debugSpecSource += "[fuzzy]";
-  if (bulletsAuto.length)   __debugSpecSource += "[auto]";
+  if (bulletsAny.length)    __debugSpecSource += "[any]";
   if (!__debugSpecSource)   __debugSpecSource  = "[none]";
 
   return {
@@ -239,7 +245,6 @@ function mapRow(row: Row): Product & {
 
 /* ---------- main fetch ---------- */
 export async function fetchProducts(range: string): Promise<Product[]> {
-  // IMPORTANT: make sure your API respects the range you pass here.
   const res = await fetch(`/api/sheet?range=${encodeURIComponent(range)}`, {
     cache: "no-store",
   });
