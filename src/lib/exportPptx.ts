@@ -147,88 +147,79 @@ export async function exportPptx({
   for (const p of items) {
     const s = pptx.addSlide();
 
-    // Title at top
-    s.addText(p.name || p.code || "Untitled Product", {
-      x: 0.5, y: 0.35, w: 9.0, h: 0.6,
-      fontSize: 26, bold: true, color: "003366",
-    });
+  // Title at top
+s.addText(p.name || p.code || "Untitled Product", {
+  x: 0.5, y: 0.35, w: 9.0, h: 0.6,
+  fontSize: 26, bold: true, color: "003366",
+});
 
-    // Layout: image left, text right
-    const IMG_BOX  = { x: 0.5, y: 1.05, w: 5.2, h: 3.9 };
-    const RIGHT_X  = 6.0;
-    const RIGHT_W  = 3.5;
-    const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 1.8 };
-    const BUL_BOX  = { x: RIGHT_X, y: 2.95, w: RIGHT_W, h: 2.1 };
+// Layout: image left, text right
+const IMG_BOX  = { x: 0.5, y: 1.05, w: 5.2, h: 3.9 };
+const RIGHT_X  = 6.0;
+const RIGHT_W  = 3.5;
+const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 1.8 };
+const BUL_BOX  = { x: RIGHT_X, y: 2.95, w: RIGHT_W, h: 2.1 };
 
-    // Image (prefer proxied)
-    const imgUrl = p.imageProxied || p.imageUrl || p.image;
-    if (imgUrl) {
-      try {
-        const data = await urlToDataUrl(imgUrl);
-        if (data) await addContainedImage(s, data, IMG_BOX);
-      } catch {}
-    }
-
-    // Description (shrink to fit so it never runs off page)
-    if (p.description) {
-      s.addText(p.description, {
-        ...DESC_BOX,
-        fontSize: 13,
-        color: "444444",
-        lineSpacing: 18,
-        valign: "top",
-        shrinkText: true,
-      });
-    }
-
-    // Prefer parsed specs; fallback to carving from description
-    const derivedBullets =
-      (p.specsBullets && p.specsBullets.length
-        ? p.specsBullets
-        : (p.description || "")
-            .split(/\r?\n|•|\u2022|;|,|—|–|-{1,2}/g)
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .slice(0, 8));
-
-    if (derivedBullets.length) {
-      try {
-        // Native bullets
-        s.addText(derivedBullets, {
-          ...BUL_BOX,
-          fontSize: 13,
-          bullet: true,
-          lineSpacing: 18,
-          valign: "top",
-          shrinkText: true,
-        });
-      } catch {
-        // Fallback: manual "• "
-        s.addText(derivedBullets.map((b) => `• ${b}`).join("\n"), {
-          ...BUL_BOX,
-          fontSize: 13,
-          lineSpacing: 18,
-          valign: "top",
-          shrinkText: true,
-        });
-      }
-    }
-
-    // Footer: code + spec link
-    if (p.code) {
-      s.addText(`Code: ${p.code}`, {
-        x: 0.5, y: 5.25, w: 4.8, h: 0.3,
-        fontSize: 12, color: "444444",
-      });
-    }
-    if (p.pdfUrl) {
-      s.addText("Spec Sheet (PDF)", {
-        x: 6.0, y: 5.25, w: 3.5, h: 0.3,
-        fontSize: 12, color: "1155CC", align: "right",
-        hyperlink: { url: p.pdfUrl },
-      });
-    }
+// Image (prefer proxied)
+{
+  const imgUrl = p.imageProxied || p.imageUrl || p.image;
+  if (imgUrl) {
+    try {
+      const data = await urlToDataUrl(imgUrl);
+      if (data) await addContainedImage(s, data, IMG_BOX);
+    } catch {}
   }
+}
+
+// Description (shrink to fit so it never runs off page)
+if (p.description) {
+  s.addText(p.description, {
+    ...DESC_BOX,
+    fontSize: 13,
+    color: "444444",
+    lineSpacing: 18,
+    valign: "top",
+    shrinkText: true,
+  });
+}
+
+// ----- IMPORTANT: bullets must be ONE string with \n lines -----
+const derivedBullets =
+  (p.specsBullets && p.specsBullets.length
+    ? p.specsBullets
+    : (p.description || "")
+        .split(/\r?\n|•|\u2022|;|,|—|–|-{1,2}|\||\//g)
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 8));
+
+const bulletsText = derivedBullets.join("\n");
+if (bulletsText) {
+  s.addText(bulletsText, {
+    ...BUL_BOX,
+    bullet: true,
+    fontSize: 13,
+    lineSpacing: 18,
+    valign: "top",
+    shrinkText: true,
+  });
+}
+
+// Footer: code + spec link
+if (p.code) {
+  s.addText(`Code: ${p.code}`, {
+    x: 0.5, y: 5.25, w: 4.8, h: 0.3,
+    fontSize: 12, color: "444444",
+  });
+}
+if (p.pdfUrl) {
+  s.addText("Spec Sheet (PDF)", {
+    x: 6.0, y: 5.25, w: 3.5, h: 0.3,
+    fontSize: 12, color: "1155CC", align: "right",
+    hyperlink: { url: p.pdfUrl },
+  });
+}
+
 
   /* OPTIONAL: full-size spec preview slides */
   for (const p of items) {
