@@ -89,7 +89,7 @@ function uniqueKeepOrder(arr: string[]) {
   return out;
 }
 
-/** NEW: derive bullets from ANY likely field on the product, not only `specsBullets`. */
+/** Derive bullets from any likely field, not only `specsBullets`. */
 function deriveBulletsFromProduct(p: any): string[] {
   // 1) If specsBullets exists and has content, use it
   if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
@@ -173,6 +173,8 @@ export async function exportPptx({
   }
 
   /* PRODUCT SLIDES */
+  let anyBullets = false;
+
   for (const p of items) {
     const s = pptx.addSlide();
 
@@ -210,17 +212,20 @@ export async function exportPptx({
       });
     }
 
-    // Specs bullets – derived from any likely fields
+    // Specs bullets – use ARRAY FORM (pptxgenjs bullet-safe)
     const bullets = deriveBulletsFromProduct(p as any);
     if (bullets.length) {
-      s.addText(bullets.join("\n"), {
-        ...BUL_BOX,
-        bullet: true,
-        fontSize: 13,
-        lineSpacing: 18,
-        valign: "top",
-        shrinkText: true,
-      });
+      anyBullets = true;
+      s.addText(
+        bullets.map(text => ({ text, options: { bullet: true } })), // <- key change
+        {
+          ...BUL_BOX,
+          fontSize: 13,
+          lineSpacing: 18,
+          valign: "top",
+          shrinkText: true,
+        }
+      );
     } else {
       s.addText("Specifications: n/a", {
         ...BUL_BOX,
@@ -286,6 +291,21 @@ export async function exportPptx({
       const data = await urlToDataUrl(url);
       if (data) s.background = { data };
     } catch {}
+  }
+
+  /* DIAGNOSTICS (auto-added once if no bullets rendered) */
+  if (!anyBullets && items.length) {
+    const s = pptx.addSlide();
+    s.addText("Diagnostics — specs not detected", {
+      x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 20, bold: true, color: "AA0000",
+    });
+    const sample = items.slice(0, 3).map((p, i) => {
+      const keys = Object.keys(p as any);
+      const preview = keys.slice(0, 20).join(", ");
+      const b = deriveBulletsFromProduct(p as any);
+      return `Item ${i + 1}: ${p.name || p.code}\nKeys: ${preview}\nDerived bullets: ${b.length}`;
+    }).join("\n\n");
+    s.addText(sample, { x: 0.5, y: 1.2, w: 9, h: 4, fontSize: 12, color: "333333" });
   }
 
   await pptx.writeFile({ fileName: `${projectName || "Product Selection"}.pptx` });
