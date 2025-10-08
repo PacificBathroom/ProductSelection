@@ -1,63 +1,78 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { google } from 'googleapis';
+// api/sheet.ts
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-function setCors(res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+/**
+ * ENV you need to set in Vercel:
+ * - GSHEET_ID           (the spreadsheet id)
+ * - GSHEET_API_KEY      (a Google API key with Sheets API enabled)
+ *
+ * Example:
+ * GSHEET_ID=1AbC...your_sheet_id...
+ * GSHEET_API_KEY=AIzaSy...
+ */
+
+const SHEET_ID = process.env.GSHEET_ID || process.env.NEXT_PUBLIC_GSHEET_ID;
+const API_KEY  = process.env.GSHEET_API_KEY || process.env.NEXT_PUBLIC_GSHEET_API_KEY;
+
+function normalizeRange(r?: string): string {
+  // Default to the “Products” sheet if range missing
+  let range = (r || "Products!A:ZZZ").trim();
+
+  // If caller passed only the sheet name, widen to A:ZZZ
+  if (!range.includes("!")) return `${range}!A:ZZZ`;
+
+  // If it already has a column span, widen the right side to ZZZ
+  // e.g. "Products!A:Z"  -> "Products!A:ZZZ"
+  //      "Products!A1:Z999" -> "Products!A:ZZZ" (we want all rows & wide columns)
+  const [sheet, cols] = range.split("!");
+  if (!cols) return `${sheet}!A:ZZZ`;
+
+  // Replace anything after the first colon with ZZZ
+  if (cols.includes(":")) {
+    const left = cols.split(":")[0].replace(/\d+$/, "") || "A";
+    return `${sheet}!${left}:ZZZ`;
+  }
+
+  // If weird input, just force to A:ZZZ
+  return `${sheet}!A:ZZZ`;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  setCors(res);
-  if (req.method === 'OPTIONS') return res.status(204).end();
-
   try {
-    const { SHEETS_SPREADSHEET_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY } = process.env;
-
-    const missing = [
-      !SHEETS_SPREADSHEET_ID && 'SHEETS_SPREADSHEET_ID',
-      !GOOGLE_CLIENT_EMAIL && 'GOOGLE_CLIENT_EMAIL',
-      !GOOGLE_PRIVATE_KEY && 'GOOGLE_PRIVATE_KEY',
-    ].filter(Boolean);
-    if (missing.length) {
-      return res.status(500).json({ error: `Missing env vars: ${missing.join(', ')}` });
+    if (!SHEET_ID || !API_KEY) {
+      res.status(500).json({ error: "Missing GSHEET_ID or GSHEET_API_KEY env vars" });
+      return;
     }
 
-    const range = String(req.query.range || 'Products!A:Z');
-    const as = String(req.query.as || 'rows');
+    const clientRange = String(req.query.range || "");
+    const range = normalizeRange(clientRange);
 
-    const auth = new google.auth.JWT({
-      email: GOOGLE_CLIENT_EMAIL!,
-      key: GOOGLE_PRIVATE_KEY!.replace(/\\n/g, '\n'),
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
+    const url =
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(SHEET_ID)}` +
+      `/values/${encodeURIComponent(range)}?majorDimension=ROWS` +
+      `&valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING` +
+      `&key=${encodeURIComponent(API_KEY)}`;
 
-    const sheets = google.sheets({ version: 'v4', auth });
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) {
+      const text = await r.text().catch(() => "");
+      res.status(r.status).json({ error: "Sheets API error", status: r.status, body: text });
+      return;
+    }
 
-    const { data } = await sheets.spreadsheets.values.get({
-      spreadsheetId: SHEETS_SPREADSHEET_ID!,
+    const json = await r.json();
+
+    // Basic CORS (optional). Remove if you don't need it.
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    res.status(200).json({
       range,
-      valueRenderOption: 'UNFORMATTED_VALUE',
-      dateTimeRenderOption: 'FORMATTED_STRING',
+      values: json.values || [],
     });
-
-    const values: any[][] = data.values ?? [];
-    if (as === 'objects' && values.length > 0) {
-      const [head, ...rows] = values;
-      const headers = head.map(h => String(h ?? '').trim());
-      const objects = rows.map(r => {
-        const o: Record<string, any> = {};
-        headers.forEach((k, i) => (o[k || `col${i+1}`] = r[i]));
-        return o;
-      });
-      return res.status(200).json({ range, count: objects.length, values: objects });
-    }
-
-    return res.status(200).json({ range, count: values.length, values });
   } catch (e: any) {
-    // surface Google API errors clearly
-    const message = e?.errors?.[0]?.message || e?.message || 'sheets error';
-    const code = e?.code || 500;
-    return res.status(code >= 400 && code < 600 ? code : 500).json({ error: message });
+    res.status(500).json({ error: e?.message || "sheet proxy failed" });
   }
 }
