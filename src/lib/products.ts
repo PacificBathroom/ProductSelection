@@ -6,20 +6,37 @@ type Row = Record<string, string | undefined>;
 
 const lc = (s?: string) => String(s || "").trim().toLowerCase();
 
+/** Choose a header row robustly (skip intro/blank rows). */
+function pickHeaderAndRows(values: string[][]): { header: string[]; body: string[][] } {
+  // Heuristic: pick the first row among the first 3 that has >= 4 non-empty cells
+  const candidates = values.slice(0, 3);
+  let headerIdx = 0;
+  let maxNonEmpty = -1;
+  candidates.forEach((r, i) => {
+    const nonEmpty = r.filter((c) => String(c || "").trim() !== "").length;
+    if (nonEmpty > maxNonEmpty) {
+      maxNonEmpty = nonEmpty;
+      headerIdx = i;
+    }
+  });
+  const header = (values[headerIdx] || []).map((h) => String(h || "").trim());
+  const body = values.slice(headerIdx + 1);
+  return { header, body };
+}
+
+function valuesToRows(values: string[][]): Row[] {
+  const { header, body } = pickHeaderAndRows(values);
+  return (body ?? []).map((arr) => {
+    const r: Row = {};
+    for (let i = 0; i < header.length; i++) r[header[i]] = arr[i];
+    return r;
+  });
+}
+
 function normalizeRow(row: Row): Record<string, string | undefined> {
   const out: Row = {};
   for (const [k, v] of Object.entries(row)) out[lc(k)] = v;
   return out;
-}
-
-function valuesToRows(values: string[][]): Row[] {
-  const [header, ...rest] = values;
-  const keys = (header ?? []).map((h) => String(h || "").trim());
-  return (rest ?? []).map((arr) => {
-    const r: Row = {};
-    for (let i = 0; i < keys.length; i++) r[keys[i]] = arr[i];
-    return r;
-  });
 }
 
 function pickCI(row: Row, ...keys: string[]) {
@@ -45,18 +62,15 @@ function findAnyImageUrl(row: Row): string | undefined {
   const preferredKeys = [
     "image","image url","imageurl","picture","photo","img","thumbnail","main image","primary image"
   ];
-
   for (const k of preferredKeys) {
     const v = r[k];
     if (v && String(v).trim()) return String(v).trim();
   }
-
   const looksUrl = (s: string) => /^https?:\/\//i.test(s) || s.startsWith("/");
   const looksImage = (s: string) =>
     /\.(png|jpe?g|webp|gif|svg)(\?|#|$)/i.test(s) ||
     /drive\.google\.com\/file\/d\//i.test(s) ||
     /wp-content|cloudfront|cdn|images|branding/i.test(s);
-
   for (const v of Object.values(r)) {
     const s = String(v || "").trim();
     if (!s) continue;
@@ -65,7 +79,7 @@ function findAnyImageUrl(row: Row): string | undefined {
   return undefined;
 }
 
-/** Split possible list text into bullets (handles pipes and slashes too) */
+/** Split possible list text into bullets (handles pipes / slashes too) */
 function splitBullets(s: string): string[] {
   return s
     .split(/\r?\n|•|\u2022|;|,|\||\/|—|–|\s-\s|^-| - |-{1,2}/gm)
@@ -109,12 +123,11 @@ function bulletsFromNumberedColumns(row: Row): string[] {
     "detail","details",
     "benefit","benefits"
   ];
-
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
     const k = key.toLowerCase();
     const hasPrefix = prefixes.some((p) => k.startsWith(p));
-    const hasOrdinal = /\d{1,2}\b/.test(k) || /\b[a-z]\b/.test(k);
+    const hasOrdinal = /\b\d{1,2}\b/.test(k) || /\b[a-z]\b/.test(k);
     if (hasPrefix && hasOrdinal) {
       const t = String(val).trim();
       if (t) vals.push(t);
@@ -123,29 +136,24 @@ function bulletsFromNumberedColumns(row: Row): string[] {
   return vals;
 }
 
-/** NEW: Collect bullets from ANY column whose header includes spec/feature/bullet… even if not numbered */
+/** Fuzzy: ANY column whose header includes spec/feature/bullet/etc. */
 function bulletsFromFuzzyColumns(row: Row): string[] {
   const r = normalizeRow(row);
   const vals: string[] = [];
   const fuzzy = /(spec|feature|bullet|point|highlight|detail|benefit)/i;
-
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
     const k = key.toLowerCase();
-    // avoid obvious fields that aren't bullet lists
     if (/(image|url|link|page|pdf|code|sku|name|title|category|desc|description)/i.test(k)) continue;
-    if (fuzzy.test(k)) {
-      vals.push(String(val));
-    }
+    if (fuzzy.test(k)) vals.push(String(val));
   }
   return vals.flatMap(splitBullets);
 }
 
-/** Heuristic: last resort — find the most list-like column or carve from description */
+/** Heuristic: pick the most list-like column; else carve from description */
 function bulletsAutoDetect(row: Row, description?: string): string[] {
   const r = normalizeRow(row);
   let best: string[] = [];
-
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
     if (/(name|title|sku|code|category|url|link|page|pdf|spec url|desc|description|image)/i.test(key)) {
@@ -154,9 +162,7 @@ function bulletsAutoDetect(row: Row, description?: string): string[] {
     const parts = splitBullets(String(val));
     if (parts.length >= 2 && parts.length > best.length) best = parts;
   }
-
   if (best.length) return best;
-
   if (description) {
     const parts = splitBullets(description);
     if (parts.length >= 2) return parts;
@@ -164,8 +170,11 @@ function bulletsAutoDetect(row: Row, description?: string): string[] {
   return [];
 }
 
-/** Map a sheet row to Product */
-function mapRow(row: Row): Product {
+/** Map a sheet row to Product (with debug metadata) */
+function mapRow(row: Row): Product & {
+  __debugSpecSource?: string;
+  __debugSpecCount?: number;
+} {
   const name = pickCI(row, "Name", "Product", "Title");
   const code = pickCI(row, "SKU", "Code", "Item Code", "Product Code");
   const description = pickCI(row, "Description", "Desc", "Blurb", "Long Description");
@@ -194,16 +203,23 @@ function mapRow(row: Row): Product {
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
 
-  // Bullets: merge every source we can think of
-  const bulletsNum   = bulletsFromNumberedColumns(row);
-  const bulletsSingle= bulletsFromSingleColumns(row);
-  const bulletsFuzzy = bulletsFromFuzzyColumns(row);
-  const bulletsAuto  = bulletsAutoDetect(row, description);
+  // Bullets: merge every source
+  const bulletsNum    = bulletsFromNumberedColumns(row);
+  const bulletsSingle = bulletsFromSingleColumns(row);
+  const bulletsFuzzy  = bulletsFromFuzzyColumns(row);
+  const bulletsAuto   = bulletsAutoDetect(row, description);
 
-  const specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsFuzzy, ...bulletsAuto]
+  let specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsFuzzy, ...bulletsAuto]
     .flatMap(splitBullets)
     .map((b) => b.trim())
     .filter(Boolean);
+
+  let __debugSpecSource = "";
+  if (bulletsNum.length)    __debugSpecSource += "[numbered]";
+  if (bulletsSingle.length) __debugSpecSource += "[single]";
+  if (bulletsFuzzy.length)  __debugSpecSource += "[fuzzy]";
+  if (bulletsAuto.length)   __debugSpecSource += "[auto]";
+  if (!__debugSpecSource)   __debugSpecSource  = "[none]";
 
   return {
     name: name || code || "—",
@@ -216,11 +232,14 @@ function mapRow(row: Row): Product {
     imageUrl: direct,
     imageProxied,
     specsBullets,
-  };
+    __debugSpecSource,
+    __debugSpecCount: specsBullets.length,
+  } as any;
 }
 
 /* ---------- main fetch ---------- */
 export async function fetchProducts(range: string): Promise<Product[]> {
+  // IMPORTANT: make sure your API respects the range you pass here.
   const res = await fetch(`/api/sheet?range=${encodeURIComponent(range)}`, {
     cache: "no-store",
   });
