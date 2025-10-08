@@ -1,78 +1,55 @@
-// api/sheet.ts
+// /api/sheet.ts
+import { google } from "googleapis";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-/**
- * ENV you need to set in Vercel:
- * - GSHEET_ID           (the spreadsheet id)
- * - GSHEET_API_KEY      (a Google API key with Sheets API enabled)
- *
- * Example:
- * GSHEET_ID=1AbC...your_sheet_id...
- * GSHEET_API_KEY=AIzaSy...
- */
+const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+const privateKey  = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+const spreadsheetId =
+  process.env.SHEETS_SPREADSHEET_ID || process.env.EETS_SPREADSHEET_ID;
 
-const SHEET_ID = process.env.GSHEET_ID || process.env.NEXT_PUBLIC_GSHEET_ID;
-const API_KEY  = process.env.GSHEET_API_KEY || process.env.NEXT_PUBLIC_GSHEET_API_KEY;
-
-function normalizeRange(r?: string): string {
-  // Default to the “Products” sheet if range missing
-  let range = (r || "Products!A:ZZZ").trim();
-
-  // If caller passed only the sheet name, widen to A:ZZZ
-  if (!range.includes("!")) return `${range}!A:ZZZ`;
-
-  // If it already has a column span, widen the right side to ZZZ
-  // e.g. "Products!A:Z"  -> "Products!A:ZZZ"
-  //      "Products!A1:Z999" -> "Products!A:ZZZ" (we want all rows & wide columns)
-  const [sheet, cols] = range.split("!");
-  if (!cols) return `${sheet}!A:ZZZ`;
-
-  // Replace anything after the first colon with ZZZ
-  if (cols.includes(":")) {
-    const left = cols.split(":")[0].replace(/\d+$/, "") || "A";
-    return `${sheet}!${left}:ZZZ`;
-  }
-
-  // If weird input, just force to A:ZZZ
-  return `${sheet}!A:ZZZ`;
+if (!clientEmail || !privateKey || !spreadsheetId) {
+  console.warn("⚠ Missing Google Sheets credentials in env vars");
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    if (!SHEET_ID || !API_KEY) {
-      res.status(500).json({ error: "Missing GSHEET_ID or GSHEET_API_KEY env vars" });
-      return;
-    }
+    const rangeParam = String(req.query.range || "");
+    const range = normalizeRange(rangeParam);
 
-    const clientRange = String(req.query.range || "");
-    const range = normalizeRange(clientRange);
+    const auth = new google.auth.JWT({
+      email: clientEmail,
+      key: privateKey,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    });
 
-    const url =
-      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(SHEET_ID)}` +
-      `/values/${encodeURIComponent(range)}?majorDimension=ROWS` +
-      `&valueRenderOption=FORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING` +
-      `&key=${encodeURIComponent(API_KEY)}`;
+    const sheets = google.sheets({ version: "v4", auth });
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+      majorDimension: "ROWS",
+    });
 
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) {
-      const text = await r.text().catch(() => "");
-      res.status(r.status).json({ error: "Sheets API error", status: r.status, body: text });
-      return;
-    }
-
-    const json = await r.json();
-
-    // Basic CORS (optional). Remove if you don't need it.
-    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Cache-Control", "no-store");
 
     res.status(200).json({
       range,
-      values: json.values || [],
+      values: resp.data.values || [],
     });
-  } catch (e: any) {
-    res.status(500).json({ error: e?.message || "sheet proxy failed" });
+  } catch (err: any) {
+    console.error("Sheets API error:", err);
+    res
+      .status(500)
+      .json({ error: err.message || "Failed to fetch Google Sheet" });
   }
+}
+
+/** Ensure we always fetch wide range */
+function normalizeRange(input?: string) {
+  if (!input) return "Products!A:ZZZ";
+  if (!input.includes("!")) return `${input}!A:ZZZ`;
+
+  const [sheet, cols] = input.split("!");
+  if (!cols.includes(":")) return `${sheet}!A:ZZZ`;
+  return `${sheet}!${cols.split(":")[0].replace(/\d+$/, "") || "A"}:ZZZ`;
 }
