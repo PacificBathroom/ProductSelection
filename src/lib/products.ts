@@ -65,10 +65,10 @@ function findAnyImageUrl(row: Row): string | undefined {
   return undefined;
 }
 
-/** Split a list-like string into bullets */
+/** Split a list-like string into bullets (now includes pipes | and slashes /) */
 function splitBullets(s: string): string[] {
   return s
-    .split(/\r?\n|•|\u2022|;|,|—|–|\s-\s|^-| - |-{1,2}/gm)
+    .split(/\r?\n|•|\u2022|;|,|\||\/|—|–|\s-\s|^-| - |-{1,2}/gm)
     .map((t) => t.replace(/^[•\u2022\-–—]\s*/, "").trim())
     .filter(Boolean);
 }
@@ -83,6 +83,7 @@ function bulletsFromSingleColumns(row: Row): string[] {
       "Bulletpoints",
       "Specs",
       "Specifications",
+      "Specification",
       "Features",
       "Feature Bullets",
       "Key Features",
@@ -95,16 +96,30 @@ function bulletsFromSingleColumns(row: Row): string[] {
   return splitBullets(raw);
 }
 
-/** Pull bullets from multiple numbered columns (Spec 1..20, Feature 1..20, Bullet 1..20) */
+/** Pull bullets from multiple numbered columns (Spec 1..20, Feature 1..20, etc.) */
 function bulletsFromNumberedColumns(row: Row): string[] {
   const r = normalizeRow(row);
   const vals: string[] = [];
-  const prefixes = ["spec", "feature", "bullet", "point", "highlight"];
+  const prefixes = [
+    "spec","specs","specification","specifications",
+    "feature","features",
+    "bullet","bullets",
+    "point","points",
+    "highlight","highlights",
+    "detail","details",
+    "benefit","benefits"
+  ];
 
   for (const [key, val] of Object.entries(r)) {
     if (!val) continue;
-    // match things like "spec", "spec 1", "feature 12", "bullet_3"
-    if (prefixes.some((p) => new RegExp(`^${p}(\\s*[_-]?\\s*\\d+)?$`, "i").test(key))) {
+    const k = key.toLowerCase();
+
+    // Accept headers that contain a prefix and either:
+    //  - a number (Spec 1, Specs2, Feature_03)
+    //  - or look like a short spec field (e.g., "Spec A")
+    const hasPrefix = prefixes.some((p) => k.includes(p));
+    const hasOrdinal = /\d{1,2}\b/.test(k) || /\b[a-z]\b/.test(k);
+    if (hasPrefix && (hasOrdinal || /^spec(s|ification|ifications)?$/.test(k))) {
       const t = String(val).trim();
       if (t) vals.push(t);
     }
@@ -124,7 +139,6 @@ function bulletsAutoDetect(row: Row, description?: string): string[] {
       continue;
     }
     const parts = splitBullets(String(val));
-    // choose the column with the most "list-ish" tokens
     if (parts.length >= 2 && parts.length > best.length) best = parts;
   }
 
@@ -168,12 +182,13 @@ function mapRow(row: Row): Product {
       ? `/api/fetch-image?url=${encodeURIComponent(direct)}`
       : direct;
 
-  // Bullets (merge all sources; keep order: numbered > single > autodetect)
+  // Bullets (merge all sources)
   const bulletsNum = bulletsFromNumberedColumns(row);
   const bulletsSingle = bulletsFromSingleColumns(row);
   const bulletsAuto = bulletsAutoDetect(row, description);
 
   const specsBullets = [...bulletsNum, ...bulletsSingle, ...bulletsAuto]
+    .flatMap(splitBullets) // in case a numbered cell has multiple items separated by "|" etc.
     .map((b) => b.trim())
     .filter(Boolean);
 
