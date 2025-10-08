@@ -109,48 +109,48 @@ function MainProductPage() {
     return a;
   }, [items, q, cat, sort]);
 
- async function onExportClick() {
-  const list = selectedList.length ? selectedList : visible;
-  if (!list.length) {
-    alert("No products to export.");
-    return;
-  }
+  async function onExportClick() {
+    const list = selectedList.length ? selectedList : visible;
+    if (!list.length) {
+      alert("No products to export.");
+      return;
+    }
 
-  try {
-    // 1) do the export first
-    await exportPptx({
-      projectName: project.projectName || "Product Presentation",
-      clientName: project.clientName || "",
-      contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
-      email: contact.email,
-      phone: contact.phone,
-      date: project.presentationDate || "",
-      items: list,
-      coverImageUrls: ["/branding/cover.jpg"],
-      backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
-    });
-
-    // 2) clear selections/filters
-    setSelected({});
-    setQ("");
-    setCat("All");
-    setSort("sheet");
-
-    // 3) clear any persisted form state (SettingsBridge usually uses "settings")
     try {
-      localStorage.removeItem("selectedProductIds");
-      localStorage.removeItem("settings");
-      localStorage.removeItem("contact");
-      localStorage.removeItem("project");
-    } catch {}
+      // 1) do the export first
+      await exportPptx({
+        projectName: project.projectName || "Product Presentation",
+        clientName: project.clientName || "",
+        contactName: `${contact.contactName}${contact.title ? ", " + contact.title : ""}`,
+        email: contact.email,
+        phone: contact.phone,
+        date: project.presentationDate || "",
+        items: list,
+        coverImageUrls: ["/branding/cover.jpg"],
+        backImageUrls: ["/branding/warranty.jpg", "/branding/service.jpg"],
+      });
 
-    // 4) refresh the form UI
-    window.location.reload();
-  } catch (e: any) {
-    console.error("Export failed", e);
-    alert("Export failed: " + (e?.message || e));
+      // 2) clear selections/filters
+      setSelected({});
+      setQ("");
+      setCat("All");
+      setSort("sheet");
+
+      // 3) clear any persisted form state (SettingsBridge usually uses "settings")
+      try {
+        localStorage.removeItem("selectedProductIds");
+        localStorage.removeItem("settings");
+        localStorage.removeItem("contact");
+        localStorage.removeItem("project");
+      } catch {}
+
+      // 4) refresh the form UI
+      window.location.reload();
+    } catch (e: any) {
+      console.error("Export failed", e);
+      alert("Export failed: " + (e?.message || e));
+    }
   }
-}
 
   return (
     <>
@@ -177,9 +177,7 @@ function MainProductPage() {
           <select
             className="sort"
             value={sort}
-            onChange={(e) =>
-              setSort(e.target.value as "sheet" | "name")
-            }
+            onChange={(e) => setSort(e.target.value as "sheet" | "name")}
           >
             <option value="sheet">Sheet order</option>
             <option value="name">Name (A–Z)</option>
@@ -231,13 +229,17 @@ function MainProductPage() {
                 <div className="name">{safeTitle(p.name)}</div>
                 {p.code && <div className="sku">SKU: {p.code}</div>}
                 {p.description && <p className="desc">{p.description}</p>}
-                {p.specsBullets?.length > 0 && (
+
+                {p.specsBullets?.length > 0 ? (
                   <ul className="specs">
                     {p.specsBullets.slice(0, 4).map((s: string, j: number) => (
                       <li key={j}>{s}</li>
                     ))}
                   </ul>
+                ) : (
+                  <div className="muted">No specs parsed</div>
                 )}
+
                 <div className="links">
                   {pageUrl && (
                     <a href={pageUrl} target="_blank" rel="noreferrer">
@@ -254,6 +256,7 @@ function MainProductPage() {
                     </a>
                   )}
                 </div>
+
                 {p.category && (
                   <div className="category">Category: {p.category}</div>
                 )}
