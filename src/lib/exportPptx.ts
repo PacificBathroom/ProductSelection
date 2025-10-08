@@ -102,17 +102,13 @@ function uniqueKeepOrder(arr: string[]) {
 
 /** Derive bullets from any likely field, not only `specsBullets`. */
 function deriveBulletsFromProduct(p: any): string[] {
-  // 1) Use explicit bullets when present
   if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
-    return uniqueKeepOrder(p.specsBullets.map(String)).slice(0, 8);
+    return uniqueKeepOrder(p.specsBullets.map(String)).slice(0, 10);
   }
-
-  // 2) Look for fields that sound like specs/features
   const candidates: string[] = [];
   for (const [k, v] of Object.entries(p)) {
     const key = String(k).toLowerCase();
     if (!/(spec|feature|bullet|point|highlight|detail|benefit)/.test(key)) continue;
-
     if (Array.isArray(v)) {
       for (const item of v) {
         const s = String(item || "").trim();
@@ -122,13 +118,22 @@ function deriveBulletsFromProduct(p: any): string[] {
       candidates.push(...splitBullets(v));
     }
   }
-
-  // 3) Fallback: carve bullets from description
   if (!candidates.length && typeof p.description === "string") {
     candidates.push(...splitBullets(p.description));
   }
+  return uniqueKeepOrder(candidates).slice(0, 10);
+}
 
-  return uniqueKeepOrder(candidates).slice(0, 8);
+// Try to guess a preview image that sits next to the PDF in /public/specs
+function guessPreviewFromPdf(pdfUrl?: string): string | undefined {
+  if (!pdfUrl) return;
+  const last = pdfUrl.split("/").pop() || "";
+  const base = last.replace(/\.pdf(\?.*)?$/i, "");
+  if (!base) return;
+  const stems = [base, base.replace(/\s+/g, "_"), base.replace(/\s+/g, "")];
+  const exts = ["png", "jpg", "jpeg", "webp"];
+  for (const s of stems) for (const e of exts) return `/specs/${s}.${e}`;
+  return;
 }
 
 /* ---------- Main ---------- */
@@ -170,26 +175,21 @@ export async function exportPptx({
     });
   }
 
-  /* PRODUCT SLIDES */
-  let anyBullets = false;
-
+  /* PRODUCT SLIDES (image left, text right) */
   for (const p of items) {
     const s = pptx.addSlide();
 
-    // Title (top)
     s.addText(p.name || p.code || "Untitled Product", {
       x: 0.5, y: 0.35, w: 9.0, h: 0.6,
       fontSize: 26, bold: true, color: "003366",
     });
 
-    // Two-column layout: image left, text right
     const IMG_BOX  = { x: 0.5, y: 1.05, w: 5.2, h: 3.9 };
     const RIGHT_X  = 6.0;
     const RIGHT_W  = 3.5;
-    const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 1.8 };
-    const BUL_BOX  = { x: RIGHT_X, y: 2.95, w: RIGHT_W, h: 2.1 };
+    const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 1.9 };
+    const BUL_BOX  = { x: RIGHT_X, y: 3.05, w: RIGHT_W, h: 2.0 };
 
-    // Image (prefer proxied)
     const imgUrl = (p as any).imageProxied || (p as any).imageUrl || (p as any).image;
     if (imgUrl) {
       try {
@@ -198,7 +198,6 @@ export async function exportPptx({
       } catch {}
     }
 
-    // Description (shrink to fit)
     if (p.description) {
       s.addText(p.description, {
         ...DESC_BOX,
@@ -210,10 +209,8 @@ export async function exportPptx({
       });
     }
 
-    // Specs bullets (robust run-array form)
     const bullets = deriveBulletsFromProduct(p as any);
     if (bullets.length) {
-      anyBullets = true;
       s.addText(
         bullets.map(text => ({ text, options: { bullet: true } })),
         {
@@ -226,16 +223,8 @@ export async function exportPptx({
           paraSpaceAfter: 6,
         }
       );
-    } else {
-      s.addText("Specifications: n/a", {
-        ...BUL_BOX,
-        fontSize: 12,
-        color: "888888",
-        valign: "top",
-      });
     }
 
-    // Footer: code + spec link
     if (p.code) {
       s.addText(`Code: ${p.code}`, {
         x: 0.5, y: 5.25, w: 4.8, h: 0.3,
@@ -251,6 +240,57 @@ export async function exportPptx({
     }
   }
 
+  /* SPECIFICATION SLIDES (one per product) */
+  for (const p of items) {
+    const s = pptx.addSlide();
+
+    s.addText(`${p.name || p.code || "—"} — Specifications`, {
+      x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 24, bold: true, color: "003366",
+    });
+
+    // Left: big bullets column
+    const bullets = deriveBulletsFromProduct(p as any);
+    if (bullets.length) {
+      s.addText(
+        bullets.map(text => ({ text, options: { bullet: true } })),
+        { x: 0.5, y: 1.2, w: 5.0, h: 4.2, fontSize: 14, lineSpacing: 20, valign: "top", shrinkText: true }
+      );
+    } else {
+      s.addText("No specifications available.", {
+        x: 0.5, y: 1.2, w: 5.0, h: 1.0, fontSize: 14, color: "888888",
+      });
+    }
+
+    // Right: PDF preview image if we can guess it, else product image fallback
+    const previewGuess = guessPreviewFromPdf(p.pdfUrl);
+    let placedPreview = false;
+    if (previewGuess) {
+      try {
+        const data = await urlToDataUrl(previewGuess);
+        if (data) {
+          await addContainedImage(s, data, { x: 5.6, y: 1.2, w: 3.8, h: 3.8 });
+          placedPreview = true;
+        }
+      } catch {}
+    }
+    if (!placedPreview) {
+      const imgUrl = (p as any).imageProxied || (p as any).imageUrl || (p as any).image;
+      if (imgUrl) {
+        try {
+          const data = await urlToDataUrl(imgUrl);
+          if (data) await addContainedImage(s, data, { x: 5.6, y: 1.2, w: 3.8, h: 3.8 });
+        } catch {}
+      }
+    }
+
+    if (p.pdfUrl) {
+      s.addText("Open Spec PDF", {
+        x: 5.6, y: 5.2, w: 3.8, h: 0.4, fontSize: 12, color: "1155CC", align: "right",
+        hyperlink: { url: p.pdfUrl },
+      });
+    }
+  }
+
   /* BACK PAGES */
   for (const url of backImageUrls) {
     const s = pptx.addSlide();
@@ -258,21 +298,6 @@ export async function exportPptx({
       const data = await urlToDataUrl(url);
       if (data) s.background = { data };
     } catch {}
-  }
-
-  /* DIAGNOSTICS (one slide if nothing produced bullets) */
-  if (!anyBullets && items.length) {
-    const s = pptx.addSlide();
-    s.addText("Diagnostics — specs not detected", {
-      x: 0.5, y: 0.5, w: 9, h: 0.6, fontSize: 20, bold: true, color: "AA0000",
-    });
-    const sample = items.slice(0, 3).map((p, i) => {
-      const keys = Object.keys(p as any);
-      const preview = keys.slice(0, 20).join(", ");
-      const b = deriveBulletsFromProduct(p as any);
-      return `Item ${i + 1}: ${p.name || p.code}\nKeys: ${preview}\nDerived bullets: ${b.length}`;
-    }).join("\n\n");
-    s.addText(sample, { x: 0.5, y: 1.2, w: 9, h: 4, fontSize: 12, color: "333333" });
   }
 
   await pptx.writeFile({ fileName: `${projectName || "Product Selection"}.pptx` });
