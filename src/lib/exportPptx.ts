@@ -88,15 +88,19 @@ function uniqueKeepOrder(arr: string[]) {
   return out;
 }
 
-function deriveBulletsFromProduct(p: any): string[] {
+function deriveBulletsFromProduct(p: any, opts: { allowFromDescription?: boolean } = {}): string[] {
+  const { allowFromDescription = false } = opts;
+
   if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
     return uniqueKeepOrder(p.specsBullets.map(String)).slice(0, 8);
   }
+
   const candidates: string[] = [];
   for (const [k, v] of Object.entries(p)) {
     if (v == null) continue;
     const key = String(k).toLowerCase();
     if (!/(spec|feature|bullet|point|highlight|detail|benefit)/.test(key)) continue;
+
     if (Array.isArray(v)) {
       for (const item of v) {
         const s = String(item || "").trim();
@@ -106,11 +110,14 @@ function deriveBulletsFromProduct(p: any): string[] {
       candidates.push(...splitBullets(v));
     }
   }
-  if (!candidates.length && typeof p.description === "string") {
+
+  if (!candidates.length && allowFromDescription && typeof p.description === "string") {
     candidates.push(...splitBullets(p.description));
   }
+
   return uniqueKeepOrder(candidates).slice(0, 8);
 }
+
 
 /** Try to find a SPEC image (technical drawing) for a product. */
 function findSpecImageUrl(p: any): string | undefined {
@@ -201,20 +208,27 @@ export async function exportPptx({
       } catch {}
     }
 
-    if (p.description) {
-      s.addText(p.description, {
-        ...DESC_BOX,
-        fontSize: 13, color: "444444", lineSpacing: 18, valign: "top", shrinkText: true,
-      });
-    }
+ // --- existing ---
+if (p.description) {
+  s.addText(p.description, {
+    ...DESC_BOX,
+    fontSize: 13, color: "444444", lineSpacing: 18, valign: "top", shrinkText: true,
+  });
+}
 
-    const bullets = deriveBulletsFromProduct(p as any);
-    if (bullets.length) {
-      const runs = bullets.map(text => ({ text, options: { bullet: true } }));
-      s.addText(runs, {
-        ...BUL_BOX, fontSize: 13, lineSpacing: 18, valign: "top", shrinkText: true,
-      });
-    }
+// Derive bullets, but do NOT use description as a source on the product slide
+const bullets = deriveBulletsFromProduct(p as any, { allowFromDescription: false });
+
+// Skip bullets if they collapse to the same text as the description
+const normalize = (t?: string) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+if (
+  bullets.length &&
+  normalize(bullets.join(" ")) !== normalize(p.description)
+) {
+  const runs = bullets.map(text => ({ text, options: { bullet: true } }));
+  s.addText(runs, { ...BUL_BOX, fontSize: 13, lineSpacing: 18, valign: "top", shrinkText: true });
+}
+
 
     if (p.code) {
       s.addText(`Code: ${p.code}`, { x: 0.5, y: 5.25, w: 4.8, h: 0.3, fontSize: 12, color: "444444" });
