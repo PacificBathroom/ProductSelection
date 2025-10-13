@@ -208,7 +208,7 @@ export async function exportPptx({
       } catch {}
     }
 
- // --- existing ---
+// --- description box (unchanged) ---
 if (p.description) {
   s.addText(p.description, {
     ...DESC_BOX,
@@ -216,18 +216,39 @@ if (p.description) {
   });
 }
 
-// Derive bullets, but do NOT use description as a source on the product slide
-const bullets = deriveBulletsFromProduct(p as any, { allowFromDescription: false });
-
-// Skip bullets if they collapse to the same text as the description
+// --- bullets (filter out anything that repeats the description) ---
 const normalize = (t?: string) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
-if (
-  bullets.length &&
-  normalize(bullets.join(" ")) !== normalize(p.description)
-) {
+
+// Do NOT derive bullets from description; only from explicit spec/feature fields
+let bullets = deriveBulletsFromProduct(p as any, { allowFromDescription: false });
+
+// Remove bullets that are duplicates of the description text
+const descNorm = normalize(p.description);
+bullets = bullets
+  .map(b => b.trim())
+  .filter(Boolean)
+  .filter(b => !descNorm || !descNorm.includes(normalize(b)));
+
+// De-dupe again after filtering
+const seen = new Set<string>();
+bullets = bullets.filter(b => {
+  const k = normalize(b);
+  if (seen.has(k)) return false;
+  seen.add(k);
+  return true;
+});
+
+if (bullets.length) {
   const runs = bullets.map(text => ({ text, options: { bullet: true } }));
-  s.addText(runs, { ...BUL_BOX, fontSize: 13, lineSpacing: 18, valign: "top", shrinkText: true });
+  s.addText(runs, {
+    ...BUL_BOX,
+    fontSize: 13,
+    lineSpacing: 18,
+    valign: "top",
+    shrinkText: true,
+  });
 }
+
 
 
     if (p.code) {
