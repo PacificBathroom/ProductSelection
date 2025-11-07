@@ -4,8 +4,8 @@ import type { Product } from "../types";
 const FULL_W = 10;
 const FULL_H = 5.625;
 
-const COVER_URLS = ["/branding/cover.jpg"];
-const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
+const DEFAULT_COVER_URLS = ["/branding/cover.jpg"];
+const DEFAULT_BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
 
 /* ---------- helpers ---------- */
 
@@ -21,7 +21,6 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 // Same-origin / public URL -> data URL
 async function urlToDataUrl(url: string): Promise<string> {
   if (!url) throw new Error("urlToDataUrl: missing url");
-  // Turn /something into https://your-domain.com/something
   const absUrl = url.startsWith("/") ? `${window.location.origin}${url}` : url;
   if (absUrl.startsWith("data:")) return absUrl;
 
@@ -100,9 +99,10 @@ async function findSpecPreviewUrl(pdfUrl?: string, sku?: string): Promise<string
   return;
 }
 
-/* ---------- main ---------- */
+/* ---------- types ---------- */
 
-type ExportArgs = {
+// Exported so you can import & use it in App.tsx if you like
+export type ExportArgs = {
   projectName?: string;
   clientName?: string;
   contactName?: string;
@@ -110,8 +110,15 @@ type ExportArgs = {
   email?: string;
   phone?: string;
   date?: string;
+
+  // NEW: optional overrides from the app
+  coverImageUrls?: string[];
+  backImageUrls?: string[];
+
   items: Product[];
 };
+
+/* ---------- main ---------- */
 
 export async function exportPptx({
   projectName = "Product Presentation",
@@ -121,19 +128,29 @@ export async function exportPptx({
   email = "",
   phone = "",
   date = "",
+  coverImageUrls,
+  backImageUrls,
   items,
 }: ExportArgs) {
   const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
+  const coverUrls = coverImageUrls && coverImageUrls.length
+    ? coverImageUrls
+    : DEFAULT_COVER_URLS;
+
+  const backUrls = backImageUrls && backImageUrls.length
+    ? backImageUrls
+    : DEFAULT_BACK_URLS;
+
   /* ---------- COVER ---------- */
 
-  if (COVER_URLS[0]) {
+  if (coverUrls[0]) {
     try {
       const s1 = pptx.addSlide();
 
       try {
-        const bg = await urlToDataUrl(COVER_URLS[0]);
+        const bg = await urlToDataUrl(coverUrls[0]);
         s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H });
       } catch (e) {
         console.warn("Cover background failed", e);
@@ -250,7 +267,7 @@ export async function exportPptx({
 
   /* ---------- BACK PAGES ---------- */
 
-  for (const url of BACK_URLS) {
+  for (const url of backUrls) {
     try {
       const data = await urlToDataUrl(url);
       const s = pptx.addSlide();
