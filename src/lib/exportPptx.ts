@@ -1,9 +1,108 @@
 // src/lib/exportPptx.ts
 import type { Product } from "../types";
-import PptxGenJS from "pptxgenjs";
 
-/* ---------- Types ---------- */
-export type ExportArgs = {
+const FULL_W = 10;
+const FULL_H = 5.625;
+
+const COVER_URLS = ["/branding/cover.jpg"];
+const BACK_URLS = ["/branding/warranty.jpg", "/branding/service.jpg"];
+
+/* ---------- helpers ---------- */
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error("FileReader error"));
+    r.onload = () => resolve(String(r.result));
+    r.readAsDataURL(blob);
+  });
+}
+
+// Same-origin / public URL -> data URL
+async function urlToDataUrl(url: string): Promise<string> {
+  if (!url) throw new Error("urlToDataUrl: missing url");
+  // Turn /something into https://your-domain.com/something
+  const absUrl = url.startsWith("/") ? `${window.location.origin}${url}` : url;
+  if (absUrl.startsWith("data:")) return absUrl;
+
+  const res = await fetch(absUrl, { cache: "no-store" });
+  if (!res.ok) throw new Error(`fetch failed: ${absUrl} (${res.status})`);
+  const blob = await res.blob();
+  return blobToDataUrl(blob);
+}
+
+async function getImageDims(dataUrl: string): Promise<{ w: number; h: number }> {
+  const img = new Image();
+  img.src = dataUrl;
+  await new Promise<void>((ok, err) => {
+    img.onload = () => ok();
+    img.onerror = () => err(new Error("image load error"));
+  });
+  return { w: img.naturalWidth, h: img.naturalHeight };
+}
+
+function fitIntoBox(
+  imgW: number, imgH: number,
+  boxX: number, boxY: number, boxW: number, boxH: number
+): { x: number; y: number; w: number; h: number } {
+  const rImg = imgW / imgH;
+  const rBox = boxW / boxH;
+  let w: number, h: number;
+  if (rImg >= rBox) { w = boxW; h = w / rImg; }
+  else { h = boxH; w = h * rImg; }
+  const x = boxX + (boxW - w) / 2;
+  const y = boxY + (boxH - h) / 2;
+  return { x, y, w, h };
+}
+
+async function addContainedImage(
+  slide: any,
+  dataUrl: string,
+  box: { x: number; y: number; w: number; h: number }
+) {
+  const { w: iw, h: ih } = await getImageDims(dataUrl);
+  const rect = fitIntoBox(iw, ih, box.x, box.y, box.w, box.h);
+  slide.addImage({ data: dataUrl, ...rect } as any);
+}
+
+function guessSpecBaseFromPdf(pdfUrl?: string): string | undefined {
+  if (!pdfUrl) return;
+  if (pdfUrl.startsWith("/specs/")) {
+    const base = pdfUrl.split("/").pop() || "";
+    return base.replace(/\.pdf(\?.*)?$/i, "");
+  }
+  const m = pdfUrl.match(/[?&]url=([^&]+)/);
+  if (m) {
+    try {
+      const decoded = decodeURIComponent(m[1]);
+      const base = decoded.split("/").pop() || "";
+      return base.replace(/\.pdf(\?.*)?$/i, "");
+    } catch {}
+  }
+  if (/^https?:\/\//i.test(pdfUrl)) {
+    const base = pdfUrl.split("/").pop() || "";
+    return base.replace(/\.pdf(\?.*)?$/i, "");
+  }
+  return;
+}
+
+async function findSpecPreviewUrl(pdfUrl?: string, sku?: string): Promise<string | undefined> {
+  const key = guessSpecBaseFromPdf(pdfUrl) || sku;
+  if (!key) return;
+  const stems = [key, key.replace(/\s+/g, "_"), key.replace(/\s+/g, "")];
+  const exts = ["png", "jpg", "jpeg", "webp"];
+  for (const stem of stems) {
+    for (const ext of exts) {
+      const url = `/specs/${stem}.${ext}`;
+      try { await urlToDataUrl(url); return url; } catch {}
+    }
+  }
+  return;
+}
+
+/* ---------- main ---------- */
+
+type ExportArgs = {
   projectName?: string;
   clientName?: string;
   contactName?: string;
@@ -12,140 +111,7 @@ export type ExportArgs = {
   phone?: string;
   date?: string;
   items: Product[];
-  coverImageUrls?: string[];
-  backImageUrls?: string[];
 };
-
-/* ---------- Helpers ---------- */
-
-async function urlToDataUrl(url: string): Promise<string | undefined> {
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return undefined;
-    const blob = await res.blob();
-    return await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onerror = () => reject(new Error("FileReader failed"));
-      r.onload = () => resolve(String(r.result));
-      r.readAsDataURL(blob);
-    });
-  } catch {
-    return undefined;
-  }
-}
-
-function fitIntoBox(
-  imgW: number, imgH: number,
-  x: number, y: number, w: number, h: number
-) {
-  const rImg = imgW / imgH;
-  const rBox = w / h;
-  let outW: number, outH: number;
-  if (rImg >= rBox) { outW = w; outH = outW / rImg; }
-  else { outH = h; outW = outH * rImg; }
-  return { x: x + (w - outW) / 2, y: y + (h - outH) / 2, w: outW, h: outH };
-}
-
-async function getImageDims(dataUrl: string): Promise<{ w: number; h: number } | undefined> {
-  try {
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise<void>((ok, err) => {
-      img.onload = () => ok();
-      img.onerror = () => err(new Error("image load error"));
-    });
-    return { w: img.naturalWidth, h: img.naturalHeight };
-  } catch { return undefined; }
-}
-
-async function addContainedImage(
-  slide: any,
-  dataUrl: string,
-  box: { x: number; y: number; w: number; h: number }
-) {
-  const dims = await getImageDims(dataUrl);
-  if (!dims) {
-    slide.addImage({ data: dataUrl, ...box } as any);
-    return;
-  }
-  slide.addImage({ data: dataUrl, ...fitIntoBox(dims.w, dims.h, box.x, box.y, box.w, box.h) } as any);
-}
-
-function splitBullets(s: string): string[] {
-  return (s || "")
-    .split(/\r?\n|•|\u2022|;|,|\||\/|—|–|\s-\s|^-| - |-{1,2}/gm)
-    .map(t => t.replace(/^[•\u2022\-–—]\s*/, "").trim())
-    .filter(Boolean);
-}
-
-function uniqueKeepOrder(arr: string[]) {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const x of arr) {
-    const k = x.toLowerCase();
-    if (!seen.has(k)) { seen.add(k); out.push(x); }
-  }
-  return out;
-}
-
-function deriveBulletsFromProduct(p: any, opts: { allowFromDescription?: boolean } = {}): string[] {
-  const { allowFromDescription = false } = opts;
-
-  if (Array.isArray(p.specsBullets) && p.specsBullets.length) {
-    return uniqueKeepOrder(p.specsBullets.map(String)).slice(0, 8);
-  }
-
-  const candidates: string[] = [];
-  for (const [k, v] of Object.entries(p)) {
-    if (v == null) continue;
-    const key = String(k).toLowerCase();
-    if (!/(spec|feature|bullet|point|highlight|detail|benefit)/.test(key)) continue;
-
-    if (Array.isArray(v)) {
-      for (const item of v) {
-        const s = String(item || "").trim();
-        if (s) candidates.push(s);
-      }
-    } else if (typeof v === "string") {
-      candidates.push(...splitBullets(v));
-    }
-  }
-
-  if (!candidates.length && allowFromDescription && typeof p.description === "string") {
-    candidates.push(...splitBullets(p.description));
-  }
-
-  return uniqueKeepOrder(candidates).slice(0, 8);
-}
-
-
-/** Try to find a SPEC image (technical drawing) for a product. */
-function findSpecImageUrl(p: any): string | undefined {
-  // 1) explicit fields if present
-  const explicit =
-    p.specImage || p.specImg || p.specsImageUrl || p.specsImg ||
-    p.specDrawing || p.drawing || p.techDrawing;
-  if (explicit) return String(explicit);
-
-  // 2) file by SKU/code in /public/specs
-  const code = (p.code || "").toString().trim();
-  if (code) {
-    const exts = ["png", "jpg", "jpeg", "webp", "svg"];
-    // return first candidate (the loader will fail gracefully if not found)
-    return `/specs/${code}.${exts[0]}`;
-  }
-
-  // 3) file by PDF name in /public/specs
-  if (p.pdfUrl) {
-    const last = String(p.pdfUrl).split("/").pop() || "";
-    const base = last.replace(/\.pdf(\?.*)?$/i, "");
-    if (base) return `/specs/${base}.png`;
-  }
-
-  return undefined;
-}
-
-/* ---------- Main ---------- */
 
 export async function exportPptx({
   projectName = "Product Presentation",
@@ -156,152 +122,144 @@ export async function exportPptx({
   phone = "",
   date = "",
   items,
-  coverImageUrls = ["/branding/cover.jpg"],
-  backImageUrls = ["/branding/warranty.jpg", "/branding/service.jpg"],
 }: ExportArgs) {
+  const PptxGenJS = (await import("pptxgenjs")).default as any;
   const pptx = new PptxGenJS();
 
-  /* COVER */
-  const sCover = pptx.addSlide();
-  try {
-    const coverSrc = coverImageUrls[0];
-    if (coverSrc) {
-      const coverBg = await urlToDataUrl(coverSrc);
-      if (coverBg) sCover.background = { data: coverBg };
+  /* ---------- COVER ---------- */
+
+  if (COVER_URLS[0]) {
+    try {
+      const s1 = pptx.addSlide();
+
+      try {
+        const bg = await urlToDataUrl(COVER_URLS[0]);
+        s1.addImage({ data: bg, x: 0, y: 0, w: FULL_W, h: FULL_H });
+      } catch (e) {
+        console.warn("Cover background failed", e);
+      }
+
+      // Title, centered horizontally
+      s1.addText(projectName, {
+        x: 0, y: 0.6, w: FULL_W, h: 1.0,
+        fontSize: 32, bold: true, color: "FFFFFF",
+        align: "center",
+        shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+      });
+
+      // Contact info, centered vertically
+      const lines: string[] = [];
+      if (contactName) lines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
+      if (email) lines.push(`Email: ${email}`);
+      if (phone) lines.push(`Phone: ${phone}`);
+      if (date) lines.push(`Date: ${date}`);
+
+      const contactBlock = lines.join("\n");
+      if (contactBlock) {
+        const lineHeight = 0.45;
+        const blockHeight = Math.max(0.9, lines.length * lineHeight);
+        const yCentered = (FULL_H - blockHeight) / 2;
+
+        s1.addText(contactBlock, {
+          x: 0.6, y: yCentered, w: 8.8, h: blockHeight,
+          fontSize: 20, color: "FFFFFF",
+          lineSpacing: 26, align: "left", valign: "middle",
+          shadow: { type: "outer", blur: 2, offset: 1, color: "000000" },
+        });
+      }
+    } catch (err) {
+      console.error("Cover generation failed", err);
     }
-  } catch {}
-  sCover.addText(projectName || "Product Presentation", {
-    x: 0.5, y: 0.8, w: 9, h: 0.8, fontSize: 28, bold: true, color: "003366",
-  });
-  const lines: string[] = [];
-  if (clientName) lines.push(`Client: ${clientName}`);
-  if (contactName) lines.push(`Your contact: ${contactName}${company ? `, ${company}` : ""}`);
-  if (email) lines.push(`Email: ${email}`);
-  if (phone) lines.push(`Phone: ${phone}`);
-  if (date) lines.push(`Date: ${date}`);
-  if (lines.length) {
-    sCover.addText(lines.join("\n"), {
-      x: 0.5, y: 1.7, w: 9, h: 2.0, fontSize: 18, color: "333333", lineSpacing: 20,
-    });
   }
 
-  /* PRODUCT + SPEC slides (pair per item) */
+  /* ---------- PRODUCT SLIDES ---------- */
+
   for (const p of items) {
-    // ---------- Product slide ----------
     const s = pptx.addSlide();
 
-    s.addText(p.name || p.code || "Untitled Product", {
-      x: 0.5, y: 0.35, w: 9.0, h: 0.6, fontSize: 26, bold: true, color: "003366",
-    });
+    // Try multiple possible image fields
+    const rawImgUrl =
+      (p as any).imageProxied ||
+      (p as any).imageUrl ||
+      (p as any).image ||
+      (p as any).ImageURL;
 
-    const IMG_BOX  = { x: 0.5, y: 1.05, w: 5.2, h: 3.9 };
-    const RIGHT_X  = 6.0;
-    const RIGHT_W  = 3.5;
-    const DESC_BOX = { x: RIGHT_X, y: 1.05, w: RIGHT_W, h: 1.8 };
-    const BUL_BOX  = { x: RIGHT_X, y: 2.95, w: RIGHT_W, h: 2.1 };
-
-    const imgUrl = (p as any).imageProxied || (p as any).imageUrl || (p as any).image;
-    if (imgUrl) {
+    if (rawImgUrl) {
       try {
-        const data = await urlToDataUrl(imgUrl);
-        if (data) await addContainedImage(s, data, IMG_BOX);
-      } catch {}
+        const imgData = await urlToDataUrl(rawImgUrl);
+        await addContainedImage(s, imgData, { x: 0.4, y: 0.85, w: 5.6, h: 3.9 });
+      } catch (imgErr) {
+        console.warn("Product image failed", rawImgUrl, imgErr);
+      }
     }
 
-// --- description box (unchanged) ---
-if (p.description) {
-  s.addText(p.description, {
-    ...DESC_BOX,
-    fontSize: 13, color: "444444", lineSpacing: 18, valign: "top", shrinkText: true,
-  });
-}
+    s.addText(p.name || "—", {
+      x: 6.3, y: 0.7, w: 3.9, h: 0.9, fontSize: 30, bold: true,
+    });
 
-// --- bullets (filter out anything that repeats the description) ---
-const normalize = (t?: string) => (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const bullets = (p.specsBullets ?? []).slice(0, 8).map(b => `• ${b}`).join("\n");
+    const body = [p.description, bullets].filter(Boolean).join("\n\n");
 
-// Do NOT derive bullets from description; only from explicit spec/feature fields
-let bullets = deriveBulletsFromProduct(p as any, { allowFromDescription: false });
-
-// Remove bullets that are duplicates of the description text
-const descNorm = normalize(p.description);
-bullets = bullets
-  .map(b => b.trim())
-  .filter(Boolean)
-  .filter(b => !descNorm || !descNorm.includes(normalize(b)));
-
-// De-dupe again after filtering
-const seen = new Set<string>();
-bullets = bullets.filter(b => {
-  const k = normalize(b);
-  if (seen.has(k)) return false;
-  seen.add(k);
-  return true;
-});
-
-if (bullets.length) {
-  const runs = bullets.map(text => ({ text, options: { bullet: true } }));
-  s.addText(runs, {
-    ...BUL_BOX,
-    fontSize: 13,
-    lineSpacing: 18,
-    valign: "top",
-    shrinkText: true,
-  });
-}
-
-
+    s.addText(body || "", {
+      x: 6.3, y: 1.8, w: 3.9, h: 3.2,
+      fontSize: 14, lineSpacing: 18, valign: "top", shrinkText: true,
+    });
 
     if (p.code) {
-      s.addText(`Code: ${p.code}`, { x: 0.5, y: 5.25, w: 4.8, h: 0.3, fontSize: 12, color: "444444" });
-    }
-    if (p.pdfUrl) {
-      s.addText("Spec Sheet (PDF)", {
-        x: 6.0, y: 5.25, w: 3.5, h: 0.3, fontSize: 12, color: "1155CC", align: "right",
-        hyperlink: { url: p.pdfUrl },
+      s.addText(p.code, {
+        x: 8.9, y: 5.25, w: 1.0, h: 0.3, fontSize: 12, color: "666666", align: "right",
       });
     }
+  }
 
-    // ---------- Spec slide (right after product) ----------
-    const specSlide = pptx.addSlide();
-    specSlide.addText(`${p.name || p.code || "—"} — Specifications`, {
-      x: 0.5, y: 0.5, w: 9, h: 0.8, fontSize: 28, bold: true, color: "0A3A6E",
+  /* ---------- SPEC SLIDES ---------- */
+
+  for (const p of items) {
+    const pdfUrl: string | undefined = (p as any).pdfUrl;
+    if (!pdfUrl) continue;
+
+    const s2 = pptx.addSlide();
+    s2.addText(`${p.name || "—"} — Specifications`, {
+      x: 0.5, y: 0.4, w: 9.0, h: 0.6, fontSize: 28, bold: true,
     });
 
-    const specUrl = findSpecImageUrl(p as any);
-    let specAdded = false;
-
-    if (specUrl) {
-      try {
-        const data = await urlToDataUrl(specUrl);
-        if (data) {
-          await addContainedImage(specSlide, data, { x: 0.8, y: 1.3, w: 8.6, h: 3.8 });
-          specAdded = true;
-        }
-      } catch {}
+    let addedImage = false;
+    try {
+      const previewUrl = await findSpecPreviewUrl(pdfUrl, p.code);
+      if (previewUrl) {
+        const prevData = await urlToDataUrl(previewUrl);
+        await addContainedImage(s2, prevData, { x: 0.25, y: 1.1, w: 9.5, h: 4.25 });
+        addedImage = true;
+      }
+    } catch (e) {
+      console.warn("Spec preview failed", e);
     }
 
-    if (!specAdded) {
-      // fall back to the product image but clearly label it; this makes the issue visible
-      const fallback = imgUrl;
-      if (fallback) {
-        const data = await urlToDataUrl(fallback);
-        if (data) await addContainedImage(specSlide, data, { x: 0.8, y: 1.3, w: 8.6, h: 3.8 });
-      }
-      specSlide.addText(
-        "Spec drawing not found. Place an image at /public/specs/<SKU>.png (or .jpg/.webp).",
-        { x: 0.8, y: 5.3, w: 8.6, h: 0.8, fontSize: 14, color: "AA0000", align: "center" }
+    if (!addedImage) {
+      s2.addText(
+        "Spec preview image not found.\n(Expecting a PNG/JPG beside the PDF in /public/specs, e.g. PMB420.png).",
+        { x: 0.6, y: 2.0, w: 8.8, h: 1.2, fontSize: 18, color: "888888" }
       );
     }
+
+    s2.addText("Open Spec PDF", {
+      x: 0.5, y: 5.0, w: 2.0, h: 0.4, fontSize: 16, color: "0078D4",
+      hyperlink: { url: pdfUrl },
+    });
   }
 
-  /* BACK PAGES */
-  for (const url of backImageUrls) {
-    const s = pptx.addSlide();
+  /* ---------- BACK PAGES ---------- */
+
+  for (const url of BACK_URLS) {
     try {
       const data = await urlToDataUrl(url);
-      if (data) s.background = { data };
-    } catch {}
+      const s = pptx.addSlide();
+      s.addImage({ data, x: 0, y: 0, w: FULL_W, h: FULL_H });
+    } catch (e) {
+      console.warn("Back page image failed", url, e);
+    }
   }
 
-  await pptx.writeFile({ fileName: `${projectName || "Product Selection"}.pptx` });
+  const filename = `${(projectName || "Product_Presentation").replace(/[^\w-]+/g, "_")}.pptx`;
+  await pptx.writeFile({ fileName: filename });
 }
